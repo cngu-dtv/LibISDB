@@ -45,6 +45,7 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/ServiceSelectorFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/SourceFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/StreamBufferFilter.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/Filters/StreamPacketParserFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/StreamSourceFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/TeeFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/TSPacketCounterFilter.cpp
@@ -54,6 +55,10 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/H265Parser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEG2VideoParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEGVideoParser.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPPacket.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/TLV/StreamFormatDetector.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVPacket.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVPacketParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/CaptionParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/DescriptorBase.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/DescriptorBlock.cpp

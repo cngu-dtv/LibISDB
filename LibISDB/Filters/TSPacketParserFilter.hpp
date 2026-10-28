@@ -115,6 +115,7 @@ namespace LibISDB
 		DataStreamSequence<TSPacket> m_PacketSequence;
 		size_t m_OutOfSyncCount;
 
+	protected:
 		bool m_OutputSequence;
 		size_t m_MaxSequencePacketCount;
 		bool m_OutputNullPacket;
@@ -128,6 +129,7 @@ namespace LibISDB
 		unsigned long long m_InputBytes;
 		unsigned long long m_TotalInputBytes;
 
+	private:
 		OneSegPATGenerator m_PATGenerator;
 		bool m_Generate1SegPAT;
 		TSPacket m_PATPacket;

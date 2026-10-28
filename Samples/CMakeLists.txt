@@ -15,6 +15,11 @@ add_executable(tslogoextract ${CMAKE_CURRENT_SOURCE_DIR}/tslogoextract.cpp)
 target_link_libraries(tslogoextract LibISDB ${CMAKE_THREAD_LIBS_INIT})
 install(TARGETS tslogoextract RUNTIME DESTINATION bin)
 
+project(tlvinfo CXX)
+add_executable(tlvinfo ${CMAKE_CURRENT_SOURCE_DIR}/tlvinfo.cpp)
+target_link_libraries(tlvinfo LibISDB ${CMAKE_THREAD_LIBS_INIT})
+install(TARGETS tlvinfo RUNTIME DESTINATION bin)
+
 project(tspidinfo CXX)
 add_executable(tspidinfo ${CMAKE_CURRENT_SOURCE_DIR}/tspidinfo.cpp)
 target_link_libraries(tspidinfo LibISDB ${CMAKE_THREAD_LIBS_INIT})

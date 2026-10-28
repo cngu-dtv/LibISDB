@@ -31,6 +31,7 @@
 #include "FilterGraph.hpp"
 #include "../Filters/SourceFilter.hpp"
 #include "../Filters/AnalyzerFilter.hpp"
+#include "../Filters/StreamPacketParserFilter.hpp"
 #include <initializer_list>
 
 
@@ -42,6 +43,7 @@ namespace LibISDB
 		: public ObjectBase
 		, protected SourceFilter::EventListener
 		, protected AnalyzerFilter::EventListener
+		, protected StreamPacketParserFilter::EventListener
 	{
 	public:
 		enum class OneSegSelectType {
@@ -85,6 +87,8 @@ namespace LibISDB
 		uint16_t GetNetworkID() const;
 		uint16_t GetEventID() const;
 
+		StreamFormat GetStreamFormat() const;
+
 		uint8_t GetVideoStreamType() const;
 		int GetVideoStreamCount(int ServiceIndex = -1) const;
 		bool SetVideoStream(int StreamIndex);
@@ -120,6 +124,9 @@ namespace LibISDB
 		void OnPMTUpdated(AnalyzerFilter *pAnalyzer, uint16_t ServiceID) override;
 		void OnEITUpdated(AnalyzerFilter *pAnalyzer) override;
 
+	// StreamPacketParserFilter::EventListener
+		void OnStreamFormatChanged(StreamPacketParserFilter *pParser, StreamFormat Format) override {}
+
 	// TSEngine
 		bool SelectService(uint16_t ServiceID, bool No1Seg = false);
 		void ResetStatus();
@@ -140,6 +147,7 @@ namespace LibISDB
 
 		SourceFilter *m_pSource;
 		AnalyzerFilter *m_pAnalyzer;
+		StreamPacketParserFilter *m_pStreamParser;
 
 		uint16_t m_CurTransportStreamID;
 		uint16_t m_CurServiceID;

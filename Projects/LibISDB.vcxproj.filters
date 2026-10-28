@@ -71,6 +71,24 @@
     <Filter Include="Templates">
       <UniqueIdentifier>{be0bca17-cb88-43ad-8a6c-72023bd69374}</UniqueIdentifier>
     </Filter>
+    <Filter Include="MMT">
+      <UniqueIdentifier>{3e998a43-915f-4155-8fba-47c84fd4b387}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="MMT\Header Files">
+      <UniqueIdentifier>{c41b91b0-ca96-4b95-a915-2953f0cdf0cd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="MMT\Source Files">
+      <UniqueIdentifier>{49c0b973-1a5d-403e-bfb7-5c5bef04d2b1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TLV">
+      <UniqueIdentifier>{75aa70a3-4793-42fb-b13a-2dc99d0f04c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TLV\Header Files">
+      <UniqueIdentifier>{ae4b1d05-b7a6-4a64-b840-fd5180c6ccd2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="TLV\Source Files">
+      <UniqueIdentifier>{fc130e5e-ac2a-49c3-8fe1-8a4d97a78cd4}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\LibISDB\LibISDBBase.hpp">
@@ -346,6 +364,27 @@
     <ClInclude Include="..\LibISDB\Utilities\StringFormat.hpp">
       <Filter>Utilities\Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\LibISDB\Filters\StreamPacketParserFilter.hpp">
+      <Filter>Filters\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\MMTConsts.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\MMTPPacket.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\TLV\StreamFormatDetector.hpp">
+      <Filter>TLV\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\TLV\TLVConsts.hpp">
+      <Filter>TLV\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\TLV\TLVPacket.hpp">
+      <Filter>TLV\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\TLV\TLVPacketParser.hpp">
+      <Filter>TLV\Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\LibISDB\Base\ARIBString.cpp">
@@ -563,6 +602,21 @@
     </ClCompile>
     <ClCompile Include="..\LibISDB\Utilities\StringFormat.cpp">
       <Filter>Utilities\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\Filters\StreamPacketParserFilter.cpp">
+      <Filter>Filters\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\MMT\MMTPPacket.cpp">
+      <Filter>MMT\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\TLV\StreamFormatDetector.cpp">
+      <Filter>TLV\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\TLV\TLVPacket.cpp">
+      <Filter>TLV\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\TLV\TLVPacketParser.cpp">
+      <Filter>TLV\Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -77,6 +77,13 @@
     <ClInclude Include="..\LibISDB\Filters\TSPacketCounterFilter.hpp" />
     <ClInclude Include="..\LibISDB\Filters\TSPacketParserFilter.hpp" />
     <ClInclude Include="..\LibISDB\LibISDB.hpp" />
+    <ClInclude Include="..\LibISDB\Filters\StreamPacketParserFilter.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\MMTConsts.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\MMTPPacket.hpp" />
+    <ClInclude Include="..\LibISDB\TLV\StreamFormatDetector.hpp" />
+    <ClInclude Include="..\LibISDB\TLV\TLVConsts.hpp" />
+    <ClInclude Include="..\LibISDB\TLV\TLVPacket.hpp" />
+    <ClInclude Include="..\LibISDB\TLV\TLVPacketParser.hpp" />
     <ClInclude Include="..\LibISDB\LibISDBBase.hpp" />
     <ClInclude Include="..\LibISDB\LibISDBConfig.hpp" />
     <ClInclude Include="..\LibISDB\LibISDBConsts.hpp" />
@@ -192,6 +199,11 @@
     <ClCompile Include="..\LibISDB\Utilities\StringFormat.cpp" />
     <ClCompile Include="..\LibISDB\Utilities\Thread.cpp" />
     <ClCompile Include="..\LibISDB\Utilities\Utilities.cpp" />
+    <ClCompile Include="..\LibISDB\Filters\StreamPacketParserFilter.cpp" />
+    <ClCompile Include="..\LibISDB\MMT\MMTPPacket.cpp" />
+    <ClCompile Include="..\LibISDB\TLV\StreamFormatDetector.cpp" />
+    <ClCompile Include="..\LibISDB\TLV\TLVPacket.cpp" />
+    <ClCompile Include="..\LibISDB\TLV\TLVPacketParser.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{55037A54-F0FB-446C-B81F-424C5D0FA3D9}</ProjectGuid>

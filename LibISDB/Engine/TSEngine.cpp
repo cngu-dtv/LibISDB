@@ -38,6 +38,7 @@ TSEngine::TSEngine() noexcept
 
 	, m_pSource(nullptr)
 	, m_pAnalyzer(nullptr)
+	, m_pStreamParser(nullptr)
 
 	, m_CurTransportStreamID(TRANSPORT_STREAM_ID_INVALID)
 	, m_CurServiceID(SERVICE_ID_INVALID)
@@ -440,6 +441,15 @@ uint16_t TSEngine::GetEventID() const
 }
 
 
+StreamFormat TSEngine::GetStreamFormat() const
+{
+	// TSPacketParserFilter は TS のみを扱う
+	if (m_pStreamParser == nullptr)
+		return StreamFormat::TS;
+	return m_pStreamParser->GetStreamFormat();
+}
+
+
 uint8_t TSEngine::GetVideoStreamType() const
 {
 	return m_VideoStreamType;
@@ -834,6 +844,13 @@ void TSEngine::OnFilterRegistered(FilterBase *pFilter, FilterGraph::IDType ID)
 	if (pSource != nullptr) {
 		pSource->AddEventListener(this);
 		m_pSource = pSource;
+		return;
+	}
+
+	StreamPacketParserFilter *pStreamParser = dynamic_cast<StreamPacketParserFilter *>(pFilter);
+	if (pStreamParser != nullptr) {
+		pStreamParser->AddEventListener(this);
+		m_pStreamParser = pStreamParser;
 		return;
 	}
 }
