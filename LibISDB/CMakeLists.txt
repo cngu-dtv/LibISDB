@@ -41,6 +41,7 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/FilterBase.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/GrabberFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/LogoDownloaderFilter.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/Filters/MMTAnalyzerFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/RecorderFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/ServiceSelectorFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/SourceFilter.cpp
@@ -55,10 +56,22 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/H265Parser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEG2VideoParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEGVideoParser.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MHEventInfo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTDescriptorBase.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTDescriptorBlock.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTDescriptors.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTGeneralLocationInfo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPacketIDMap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPPacket.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTSignaling.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTString.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTTableBase.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTTables.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TLV/StreamFormatDetector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVPacket.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVPacketParser.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVSIDescriptors.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/TLV/TLVSITables.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/CaptionParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/DescriptorBase.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/TS/DescriptorBlock.cpp

@@ -79,6 +79,13 @@ namespace LibISDB
 	constexpr size_t NTP_PACKET_SIZE = 48;
 	constexpr size_t NTP_TRANSMIT_TIMESTAMP_OFFSET = 40;
 
+	/*
+		TLV-SI の table_id (ARIB STD-B60 表 4-2)
+	*/
+	constexpr uint8_t TLV_TABLE_ID_NIT_ACTUAL = 0x40_u8; // TLV-NIT (自ネットワーク)
+	constexpr uint8_t TLV_TABLE_ID_NIT_OTHER  = 0x41_u8; // TLV-NIT (他ネットワーク)
+	constexpr uint8_t TLV_TABLE_ID_AMT        = 0xFE_u8; // AMT
+
 } // namespace LibISDB
 
 

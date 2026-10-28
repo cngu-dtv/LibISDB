@@ -144,9 +144,12 @@ const CharType * GetComponentTypeText_ja(uint8_t StreamContent, uint8_t Componen
 	switch (StreamContent) {
 	case 0x01:
 	case 0x05:
+	case 0x09:
 		return GetVideoComponentTypeText_ja(ComponentType);
 
 	case 0x02:
+	case 0x03:
+	case 0x04:
 		return GetAudioComponentTypeText_ja(ComponentType);
 	}
 

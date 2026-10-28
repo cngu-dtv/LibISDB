@@ -88,6 +88,53 @@ namespace LibISDB
 	constexpr uint16_t MMT_PACKET_ID_DATA    = 0x8007_u16; // データ伝送メッセージ
 	constexpr uint16_t MMT_PACKET_ID_MH_DIT  = 0x8008_u16; // M2 ショートセクションメッセージ (MH-DIT)
 	constexpr uint16_t MMT_PACKET_ID_MH_SIT  = 0x8009_u16; // M2 セクションメッセージ (MH-SIT)
+	constexpr uint16_t MMT_PACKET_ID_INVALID = 0xFFFF_u16; // 無効
+
+	/*
+		message_id (ARIB STD-B60 表 4-6)
+	*/
+	constexpr uint16_t MMT_MESSAGE_ID_PA                = 0x0000_u16; // PA メッセージ
+	constexpr uint16_t MMT_MESSAGE_ID_M2_SECTION        = 0x8000_u16; // M2 セクションメッセージ
+	constexpr uint16_t MMT_MESSAGE_ID_CA                = 0x8001_u16; // CA メッセージ
+	constexpr uint16_t MMT_MESSAGE_ID_M2_SHORT_SECTION  = 0x8002_u16; // M2 短セクションメッセージ
+	constexpr uint16_t MMT_MESSAGE_ID_DATA_TRANSMISSION = 0x8003_u16; // データ伝送メッセージ
+
+	/*
+		table_id (ARIB STD-B60 表 4-8)
+	*/
+	constexpr uint8_t MMT_TABLE_ID_MPT                  = 0x20_u8; // MPT
+	constexpr uint8_t MMT_TABLE_ID_PLT                  = 0x80_u8; // PLT
+	constexpr uint8_t MMT_TABLE_ID_LCT                  = 0x81_u8; // LCT
+	constexpr uint8_t MMT_TABLE_ID_ECM_0                = 0x82_u8; // ECM
+	constexpr uint8_t MMT_TABLE_ID_ECM_1                = 0x83_u8; // ECM
+	constexpr uint8_t MMT_TABLE_ID_EMM_0                = 0x84_u8; // EMM
+	constexpr uint8_t MMT_TABLE_ID_EMM_1                = 0x85_u8; // EMM
+	constexpr uint8_t MMT_TABLE_ID_CAT                  = 0x86_u8; // CAT (MH)
+	constexpr uint8_t MMT_TABLE_ID_MH_EIT_PF            = 0x8B_u8; // MH-EIT [p/f]
+	constexpr uint8_t MMT_TABLE_ID_MH_EIT_SCHEDULE_FIRST = 0x8C_u8; // MH-EIT [schedule]
+	constexpr uint8_t MMT_TABLE_ID_MH_EIT_SCHEDULE_LAST  = 0x9B_u8; // MH-EIT [schedule]
+	constexpr uint8_t MMT_TABLE_ID_MH_AIT               = 0x9C_u8; // MH-AIT
+	constexpr uint8_t MMT_TABLE_ID_MH_BIT               = 0x9D_u8; // MH-BIT
+	constexpr uint8_t MMT_TABLE_ID_MH_SDTT              = 0x9E_u8; // MH-SDTT
+	constexpr uint8_t MMT_TABLE_ID_MH_SDT_ACTUAL        = 0x9F_u8; // MH-SDT (自ストリーム)
+	constexpr uint8_t MMT_TABLE_ID_MH_SDT_OTHER         = 0xA0_u8; // MH-SDT (他ストリーム)
+	constexpr uint8_t MMT_TABLE_ID_MH_TOT               = 0xA1_u8; // MH-TOT
+	constexpr uint8_t MMT_TABLE_ID_MH_CDT               = 0xA2_u8; // MH-CDT
+	constexpr uint8_t MMT_TABLE_ID_MH_DIT               = 0xA7_u8; // MH-DIT
+	constexpr uint8_t MMT_TABLE_ID_MH_SIT               = 0xA8_u8; // MH-SIT
+
+	/*
+		asset_type (ARIB STD-B60 表 7-8)
+	*/
+	constexpr uint32_t MMT_ASSET_TYPE_HEV1 = 0x68657631_u32; // 'hev1' HEVC (VPS/SPS/PPS を MFU に含む)
+	constexpr uint32_t MMT_ASSET_TYPE_HVC1 = 0x68766331_u32; // 'hvc1' HEVC (VPS/SPS/PPS は MPU メタデータのみ)
+	constexpr uint32_t MMT_ASSET_TYPE_MP4A = 0x6D703461_u32; // 'mp4a' MPEG-4 オーディオ
+	constexpr uint32_t MMT_ASSET_TYPE_STPP = 0x73747070_u32; // 'stpp' 字幕・文字スーパー
+	constexpr uint32_t MMT_ASSET_TYPE_AAPP = 0x61617070_u32; // 'aapp' アプリケーション
+	constexpr uint32_t MMT_ASSET_TYPE_ASGD = 0x61736764_u32; // 'asgd' 同期型汎用データ
+	constexpr uint32_t MMT_ASSET_TYPE_AAGD = 0x61616764_u32; // 'aagd' 非同期型汎用データ
+
+	constexpr uint16_t MMT_COMPONENT_TAG_INVALID = 0xFFFF_u16;
 
 } // namespace LibISDB
 

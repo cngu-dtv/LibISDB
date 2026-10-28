@@ -34,12 +34,19 @@
 #include "../LibISDB/Filters/StreamSourceFilter.hpp"
 #include "../LibISDB/Filters/StreamPacketParserFilter.hpp"
 #include "../LibISDB/Filters/AsyncStreamingFilter.hpp"
+#include "../LibISDB/Filters/MMTAnalyzerFilter.hpp"
+#include "../LibISDB/TS/TSInformation.hpp"
 #include "../LibISDB/Base/StandardStream.hpp"
 #include "../LibISDB/Utilities/StringFormat.hpp"
 #include "../LibISDB/Utilities/StringUtilities.hpp"
 #include <iostream>
 #include <iomanip>
 #include <map>
+
+#if defined(LIBISDB_WINDOWS) && defined(LIBISDB_WCHAR)
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 
 namespace
@@ -263,6 +270,240 @@ const LibISDB::CharType * GetSignalingTableText(std::uint8_t TableID)
 }
 
 
+/** MMT 解析フィルタのイベントを数える */
+class AnalyzerEventCounter
+	: public LibISDB::MMTAnalyzerFilter::EventListener
+{
+public:
+	unsigned long PLT = 0;
+	unsigned long MPT = 0;
+	unsigned long MHSDT = 0;
+	unsigned long TLVNIT = 0;
+	unsigned long MHBIT = 0;
+	unsigned long MHEIT = 0;
+	unsigned long MHCAT = 0;
+	unsigned long MHTOT = 0;
+
+	void OnPLTUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { PLT++; }
+	void OnMPTUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer, std::uint16_t ServiceID) override { MPT++; }
+	void OnMHSDTUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { MHSDT++; }
+	void OnTLVNITUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { TLVNIT++; }
+	void OnMHBITUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { MHBIT++; }
+	void OnMHEITUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { MHEIT++; }
+	void OnMHCATUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { MHCAT++; }
+	void OnMHTOTUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override { MHTOT++; }
+};
+
+
+LibISDB::String FormatDateTime(const LibISDB::DateTime &Time)
+{
+	if (!Time.IsValid())
+		return LIBISDB_STR("-");
+
+	LibISDB::CharType Text[64];
+	LibISDB::StringFormat(
+		Text, LIBISDB_STR("{}/{:02}/{:02} {:02}:{:02}:{:02}"),
+		Time.Year, Time.Month, Time.Day, Time.Hour, Time.Minute, Time.Second);
+
+	return LibISDB::String(Text);
+}
+
+
+LibISDB::String FormatAssetType(std::uint32_t AssetType)
+{
+	LibISDB::String Text;
+
+	for (int i = 3; i >= 0; i--) {
+		const char c = static_cast<char>((AssetType >> (i * 8)) & 0xFF);
+		Text += ((c >= 0x20) && (c < 0x7F)) ? static_cast<LibISDB::CharType>(c) : LIBISDB_CHAR('?');
+	}
+
+	return Text;
+}
+
+
+template<typename TStream> void PrintHex(TStream &Out, unsigned int Value, int Digits)
+{
+	Out << LIBISDB_STR("0x") << std::hex << std::uppercase << std::setfill(LIBISDB_CHAR('0')) << std::setw(Digits) << Value
+		<< std::dec << std::setfill(LIBISDB_CHAR(' '));
+}
+
+
+template<typename TStream> void PrintEvent(TStream &Out, const LibISDB::EventInfo &Event)
+{
+	Out << FormatDateTime(Event.StartTime)
+		<< LIBISDB_STR(" (") << Event.Duration / 60 << LIBISDB_STR(" min) event_id ");
+	PrintHex(Out, Event.EventID, 4);
+	Out << LIBISDB_STR(" \"") << Event.EventName << LIBISDB_STR("\"") << std::endl;
+	if (!Event.EventText.empty())
+		Out << LIBISDB_STR("      Text     : ") << Event.EventText << std::endl;
+	for (const auto &Video : Event.VideoList) {
+		const LibISDB::CharType *pText = LibISDB::GetComponentTypeText_ja(Video.StreamContent, Video.ComponentType);
+		Out << LIBISDB_STR("      Video    : component_tag ");
+		PrintHex(Out, Video.ComponentTag, 2);
+		Out << LIBISDB_STR(" ") << ((pText != nullptr) ? pText : LIBISDB_STR("?")) << std::endl;
+	}
+	for (const auto &Audio : Event.AudioList) {
+		const LibISDB::CharType *pText = LibISDB::GetComponentTypeText_ja(Audio.StreamContent, Audio.ComponentType);
+		Out << LIBISDB_STR("      Audio    : component_tag ");
+		PrintHex(Out, Audio.ComponentTag, 2);
+		Out << LIBISDB_STR(" ") << ((pText != nullptr) ? pText : LIBISDB_STR("?"))
+			<< (Audio.MainComponentFlag ? LIBISDB_STR(" (main)") : LIBISDB_STR(""))
+			<< LIBISDB_STR(" ") << Audio.Text << std::endl;
+	}
+	if (Event.ContentNibble.NibbleCount > 0) {
+		Out << LIBISDB_STR("      Genre    :");
+		for (int i = 0; i < Event.ContentNibble.NibbleCount; i++) {
+			Out << LIBISDB_STR(" ") << static_cast<int>(Event.ContentNibble.NibbleList[i].ContentNibbleLevel1)
+				<< LIBISDB_STR("-") << static_cast<int>(Event.ContentNibble.NibbleList[i].ContentNibbleLevel2);
+		}
+		Out << std::endl;
+	}
+	for (const auto &Text : Event.ExtendedText) {
+		Out << LIBISDB_STR("      [") << Text.Description << LIBISDB_STR("] ")
+			<< Text.Text.length() << LIBISDB_STR(" chars") << std::endl;
+	}
+}
+
+
+template<typename TStream> void PrintAnalyzerInfo(
+	TStream &Out, const LibISDB::MMTAnalyzerFilter *pAnalyzer, const AnalyzerEventCounter &Counter)
+{
+	LibISDB::String Name;
+
+	Out << LIBISDB_STR("TLV stream      : tlv_stream_id ");
+	PrintHex(Out, pAnalyzer->GetTLVStreamID(), 4);
+	Out << LIBISDB_STR(" / network_id ");
+	PrintHex(Out, pAnalyzer->GetNetworkID(), 4);
+	if (pAnalyzer->GetNetworkName(&Name) && !Name.empty())
+		Out << LIBISDB_STR(" \"") << Name << LIBISDB_STR("\"");
+	Out << std::endl;
+
+	LibISDB::DateTime Time;
+	if (pAnalyzer->GetTOTTime(&Time)) {
+		Out << LIBISDB_STR("MH-TOT          : ") << FormatDateTime(Time);
+		bool Interpolated;
+		if (pAnalyzer->GetInterpolatedTOTTime(&Time, &Interpolated) && Interpolated)
+			Out << LIBISDB_STR(" (interpolated ") << FormatDateTime(Time) << LIBISDB_STR(")");
+		Out << std::endl;
+	}
+
+	LibISDB::MMTAnalyzerFilter::ServiceList ServiceList;
+	pAnalyzer->GetServiceList(&ServiceList);
+	for (size_t i = 0; i < ServiceList.size(); i++) {
+		const LibISDB::MMTAnalyzerFilter::ServiceInfo &Service = ServiceList[i];
+
+		Out << std::endl << LIBISDB_STR("Service ");
+		PrintHex(Out, Service.ServiceID, 4);
+		Out << LIBISDB_STR(" : \"") << Service.ServiceName << LIBISDB_STR("\" (") << Service.ProviderName << LIBISDB_STR(")");
+		Out << LIBISDB_STR(" type ");
+		PrintHex(Out, Service.ServiceType, 2);
+		Out << LIBISDB_STR(" / MPT ");
+		PrintHex(Out, Service.MPTPacketID, 4);
+		Out << LIBISDB_STR(" / logo_id ");
+		PrintHex(Out, Service.LogoID, 3);
+		Out << LIBISDB_STR(" / remote control key ") << static_cast<int>(pAnalyzer->GetRemoteControlKeyID(Service.ServiceID))
+			<< std::endl;
+
+		for (const auto &ECM : Service.ECMList) {
+			Out << LIBISDB_STR("    ECM          : CA_system_ID ");
+			PrintHex(Out, ECM.CASystemID, 4);
+			Out << LIBISDB_STR(" packet_id ");
+			PrintHex(Out, ECM.PacketID, 4);
+			Out << std::endl;
+		}
+
+		const struct {
+			const LibISDB::CharType *pName;
+			const LibISDB::MMTAnalyzerFilter::AssetInfoList &List;
+		} AssetGroups[] = {
+			{LIBISDB_STR("Video"),       Service.VideoAssetList},
+			{LIBISDB_STR("Audio"),       Service.AudioAssetList},
+			{LIBISDB_STR("Caption"),     Service.CaptionAssetList},
+			{LIBISDB_STR("Application"), Service.ApplicationAssetList},
+			{LIBISDB_STR("Other"),       Service.OtherAssetList},
+		};
+		for (const auto &Group : AssetGroups) {
+			for (const auto &Asset : Group.List) {
+				Out << LIBISDB_STR("    ") << std::left << std::setw(12) << Group.pName << std::right << LIBISDB_STR(" : packet_id ");
+				PrintHex(Out, Asset.PacketID, 4);
+				Out << LIBISDB_STR(" ") << FormatAssetType(Asset.AssetType) << LIBISDB_STR(" component_tag ");
+				PrintHex(Out, Asset.ComponentTag, 4);
+				Out << std::endl;
+			}
+		}
+
+		for (int Next = 0; Next <= 1; Next++) {
+			LibISDB::EventInfo Event;
+			if (pAnalyzer->GetEventInfo(static_cast<int>(i), &Event, Next != 0)) {
+				Out << (Next ? LIBISDB_STR("    Following    : ") : LIBISDB_STR("    Present      : "));
+				PrintEvent(Out, Event);
+			}
+		}
+	}
+
+	LibISDB::MMTAnalyzerFilter::SDTStreamList SDTStreamList;
+	if (pAnalyzer->GetSDTStreamList(&SDTStreamList) && !SDTStreamList.empty()) {
+		Out << std::endl << LIBISDB_STR("MH-SDT streams :") << std::endl;
+		for (const auto &Stream : SDTStreamList) {
+			for (const auto &Service : Stream.ServiceList) {
+				Out << LIBISDB_STR("    ");
+				PrintHex(Out, Stream.TLVStreamID, 4);
+				Out << LIBISDB_STR(" / ");
+				PrintHex(Out, Service.ServiceID, 4);
+				Out << LIBISDB_STR(" \"") << Service.ServiceName << LIBISDB_STR("\"") << std::endl;
+			}
+		}
+	}
+
+	LibISDB::MMTAnalyzerFilter::SatelliteDeliverySystemList SatelliteList;
+	if (pAnalyzer->GetSatelliteDeliverySystemList(&SatelliteList)) {
+		Out << std::endl << LIBISDB_STR("TLV-NIT streams :") << std::endl;
+		for (const auto &e : SatelliteList) {
+			Out << LIBISDB_STR("    ");
+			PrintHex(Out, e.TLVStreamID, 4);
+			Out << LIBISDB_STR(" : frequency ") << e.Frequency
+				<< LIBISDB_STR(" polarization ") << static_cast<int>(e.Polarization)
+				<< LIBISDB_STR(" modulation ") << static_cast<int>(e.Modulation) << std::endl;
+		}
+	}
+
+	LibISDB::MMTAnalyzerFilter::BITNetworkList BITList;
+	if (pAnalyzer->GetBITNetworkList(&BITList)) {
+		Out << std::endl << LIBISDB_STR("MH-BIT broadcasters :") << std::endl;
+		for (const auto &Network : BITList) {
+			for (const auto &Broadcaster : Network.BroadcasterList) {
+				Out << LIBISDB_STR("    ");
+				PrintHex(Out, Broadcaster.BroadcasterID, 2);
+				Out << LIBISDB_STR(" \"") << Broadcaster.BroadcasterName << LIBISDB_STR("\" services ")
+					<< Broadcaster.ServiceList.size() << std::endl;
+			}
+		}
+	}
+
+	LibISDB::MMTAnalyzerFilter::EMMPacketIDList EMMList;
+	if (pAnalyzer->GetEMMPacketIDList(&EMMList) && !EMMList.empty()) {
+		Out << std::endl << LIBISDB_STR("EMM packet_id :");
+		for (std::uint16_t PacketID : EMMList) {
+			Out << LIBISDB_STR(" ");
+			PrintHex(Out, PacketID, 4);
+		}
+		Out << std::endl;
+	}
+
+	Out << std::endl
+		<< LIBISDB_STR("Events : PLT ") << Counter.PLT
+		<< LIBISDB_STR(" / MPT ") << Counter.MPT
+		<< LIBISDB_STR(" / MH-SDT ") << Counter.MHSDT
+		<< LIBISDB_STR(" / TLV-NIT ") << Counter.TLVNIT
+		<< LIBISDB_STR(" / MH-BIT ") << Counter.MHBIT
+		<< LIBISDB_STR(" / MH-EIT ") << Counter.MHEIT
+		<< LIBISDB_STR(" / CAT ") << Counter.MHCAT
+		<< LIBISDB_STR(" / MH-TOT ") << Counter.MHTOT
+		<< std::endl;
+}
+
+
 }
 
 
@@ -283,9 +524,16 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+#if defined(LIBISDB_WINDOWS) && defined(LIBISDB_WCHAR)
+	::_setmode(::_fileno(stdout), _O_U8TEXT);
+#endif
+
 	LibISDB::StreamSourceFilter *pSource = new LibISDB::StreamSourceFilter;
 	LibISDB::StreamPacketParserFilter *pParser = new LibISDB::StreamPacketParserFilter;
 	TLVInfoFilter *pInfo = new TLVInfoFilter;
+	LibISDB::MMTAnalyzerFilter *pAnalyzer = new LibISDB::MMTAnalyzerFilter;
+	AnalyzerEventCounter EventCounter;
+	pAnalyzer->AddEventListener(&EventCounter);
 
 #define ASYNC
 #ifdef ASYNC
@@ -303,7 +551,8 @@ int main(int argc, char **argv)
 		pAsyncStreaming,
 #endif
 		pParser,
-		pInfo
+		pInfo,
+		pAnalyzer
 		});
 	Engine.SetStartStreamingOnSourceOpen(true);
 
@@ -427,6 +676,9 @@ int main(int argc, char **argv)
 			Out << std::endl;
 		}
 	}
+
+	Out << std::endl;
+	PrintAnalyzerInfo(Out, pAnalyzer, EventCounter);
 
 	return 0;
 }
