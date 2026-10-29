@@ -289,6 +289,65 @@ namespace LibISDB
 		bool ResetScheduleService(uint16_t NetworkID, uint16_t TLVStreamID, uint16_t ServiceID);
 	};
 
+	/** MH-CDT クラス (ARIB STD-B60 7.3.3.10) */
+	class MHCDTTable
+		: public PSISingleTable
+	{
+	public:
+		static constexpr uint8_t TABLE_ID = MMT_TABLE_ID_MH_CDT;
+
+		// data_type
+		static constexpr uint8_t DATA_TYPE_LOGO    = 0x01_u8; // ロゴ
+		static constexpr uint8_t DATA_TYPE_INVALID = 0xFF_u8; // 無効
+
+		/** ロゴの data_module_byte() (ARIB TR-B39 第 1 編 5.2.4 表 5-7) */
+		struct LogoModuleInfo {
+			uint8_t LogoType;     /**< logo_type */
+			uint16_t LogoID;      /**< logo_id */
+			uint16_t LogoVersion; /**< logo_version */
+			uint16_t DataSize;    /**< data_size */
+			const uint8_t *pData; /**< data_byte */
+		};
+
+		MHCDTTable();
+
+	// PSISingleTable
+		void Reset() override;
+
+	// MHCDTTable
+		uint16_t GetDownloadDataID() const noexcept { return m_CurSection.GetTableIDExtension(); }
+		uint16_t GetOriginalNetworkID() const noexcept { return m_OriginalNetworkID; }
+		uint8_t GetDataType() const noexcept { return m_DataType; }
+		const MMTDescriptorBlock * GetDescriptorBlock() const noexcept { return &m_DescriptorBlock; }
+		uint16_t GetDataModuleSize() const noexcept;
+		const uint8_t * GetDataModuleData() const noexcept;
+		bool GetLogoModule(ReturnArg<LogoModuleInfo> Info) const;
+
+	protected:
+		bool OnTableUpdate(const PSISection *pCurSection, const PSISection *pOldSection) override;
+
+		uint16_t m_OriginalNetworkID;         /**< original_network_id */
+		uint8_t m_DataType;                   /**< data_type */
+		MMTDescriptorBlock m_DescriptorBlock; /**< 記述子 */
+		uint16_t m_DataModuleOffset;          // ペイロード内の data_module_byte の位置
+	};
+
+	/** MH-CDT 集合クラス (download_data_id 毎のサブテーブル) */
+	class MHCDTMultiTable
+		: public PSITable
+	{
+	public:
+		int GetDownloadDataIndex(uint16_t DownloadDataID) const;
+		const MHCDTTable * GetCDTTable(int Index, uint16_t SectionNumber) const;
+
+	protected:
+	// PSISectionParser::PSISectionHandler
+		bool OnPSISection(const PSISectionParser *pSectionParser, const PSISection *pSection) override;
+
+	// PSITable
+		PSITableBase * CreateSectionTable(const PSISection *pSection) override;
+	};
+
 	/** MH-BIT クラス (ARIB STD-B60 7.3.3.11) */
 	class MHBITTable
 		: public PSISingleTable

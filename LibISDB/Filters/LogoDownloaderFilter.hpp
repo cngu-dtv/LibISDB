@@ -32,6 +32,7 @@
 #include "../TS/PSISection.hpp"
 #include "../TS/PSITable.hpp"
 #include "../TS/PIDMap.hpp"
+#include "../MMT/MMTPacketIDMap.hpp"
 #include "../Base/DateTime.hpp"
 #include <vector>
 #include <map>
@@ -47,8 +48,10 @@ namespace LibISDB
 	public:
 		struct LogoService {
 			uint16_t NetworkID;
-			uint16_t TransportStreamID;
+			uint16_t TransportStreamID; // TLV の場合は tlv_stream_id
 			uint16_t ServiceID;
+
+			bool operator == (const LogoService &rhs) const noexcept = default;
 		};
 
 		struct LogoData {
@@ -97,6 +100,11 @@ namespace LibISDB
 		bool UnmapDataES(int Index);
 		bool GetTOTTime(DateTime *pTime);
 
+		void OnMHSDTSection(const PSITableBase *pTable, const PSISection *pSection);
+		void OnMHCDTSection(const PSITableBase *pTable, const PSISection *pSection);
+		void UpdateMMTLogo();
+		bool GetMHTOTTime(DateTime *pTime) const;
+
 		struct ServiceInfo {
 			uint16_t ServiceID;
 			uint16_t PMTPID;
@@ -104,10 +112,21 @@ namespace LibISDB
 			std::vector<uint16_t> ESList;
 		};
 
+		struct MMTLogoStatus {
+			uint16_t LogoID;
+			uint16_t LogoVersion;
+			uint8_t CDTVersion;
+			std::vector<LogoService> ServiceList;
+		};
+
 		PIDMapManager m_PIDMapManager;
 		LogoHandler *m_pLogoHandler;
 		std::vector<ServiceInfo> m_ServiceList;
 		std::map<uint32_t, uint16_t> m_VersionMap;
+
+		MMTPacketIDMapManager m_MMTPacketIDMapManager;
+		std::map<uint32_t, MMTLogoStatus> m_MMTLogoStatusMap; // キーは download_data_id << 8 | logo_type
+		std::vector<uint8_t> m_MMTLogoBuffer;
 	};
 
 } // namespace LibISDB

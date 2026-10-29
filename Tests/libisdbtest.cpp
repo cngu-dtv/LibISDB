@@ -3842,6 +3842,223 @@ TEST_CASE("AACDownmix", "[mediaparser][aac]")
 	CHECK(Downmix({{FL, 32767}, {TpFL, 32767}, {FR, -32768}, {BtFR, -32768}}) == std::vector<std::int16_t> {0, 32767, -32768, 0, 0, 0});
 }
 
+#include "../LibISDB/Filters/LogoDownloaderFilter.hpp"
+
+namespace
+{
+	class LogoRecorder
+		: public LibISDB::LogoDownloaderFilter::LogoHandler
+	{
+	public:
+		struct Logo {
+			std::uint16_t NetworkID;
+			std::vector<LibISDB::LogoDownloaderFilter::LogoService> ServiceList;
+			std::uint16_t LogoID;
+			std::uint16_t LogoVersion;
+			std::uint8_t LogoType;
+			ByteArray Data;
+			LibISDB::DateTime Time;
+		};
+
+		std::vector<Logo> Logos;
+
+		void OnLogoDownloaded(const LibISDB::LogoDownloaderFilter::LogoData &Data) override
+		{
+			Logo &Info = Logos.emplace_back();
+			Info.NetworkID = Data.NetworkID;
+			Info.ServiceList = Data.ServiceList;
+			Info.LogoID = Data.LogoID;
+			Info.LogoVersion = Data.LogoVersion;
+			Info.LogoType = Data.LogoType;
+			Info.Data.assign(Data.pData, Data.pData + Data.DataSize);
+			Info.Time = Data.Time;
+		}
+	};
+
+	ByteArray MakeLogoCDTSection(
+		std::uint16_t DownloadDataID, std::uint8_t Version, std::uint8_t SectionNumber, std::uint8_t LastSectionNumber,
+		std::uint8_t LogoType, std::uint16_t LogoID, std::uint16_t LogoVersion, const ByteArray &Data)
+	{
+		ByteArray Payload;
+		Append16(Payload, 0x000B);
+		Payload.push_back(0x01);
+		Append16(Payload, 0xF000);
+		Payload.push_back(LogoType);
+		Append16(Payload, static_cast<std::uint16_t>(0xFE00 | LogoID));
+		Append16(Payload, static_cast<std::uint16_t>(0xF000 | LogoVersion));
+		Append16(Payload, static_cast<std::uint16_t>(Data.size()));
+		Append(Payload, Data);
+		return MakeSection(0xA2, DownloadDataID, Version, SectionNumber, LastSectionNumber, Payload);
+	}
+
+	// LogoList は logo_type, start_section_number, num_of_sections の並び
+	ByteArray MakeLogoCDT1Descriptor(
+		std::uint16_t LogoID, std::uint16_t LogoVersion, std::uint16_t DownloadDataID, const ByteArray &LogoList)
+	{
+		ByteArray Body {0x01};
+		Append16(Body, static_cast<std::uint16_t>(0xFE00 | LogoID));
+		Append16(Body, static_cast<std::uint16_t>(0xF000 | LogoVersion));
+		Append16(Body, DownloadDataID);
+		Append(Body, LogoList);
+		return Body;
+	}
+
+	ByteArray MakeLogoSDTPayload(const std::vector<std::pair<std::uint16_t, ByteArray>> &ServiceList)
+	{
+		ByteArray Payload;
+		Append16(Payload, 0x000B);
+		Payload.push_back(0xFF);
+		for (const auto &e : ServiceList) {
+			Append16(Payload, e.first);
+			Payload.push_back(0xFF);
+			Append(Payload, WithLength16(0x8, MakeMMTDescriptor(0x8025, e.second)));
+		}
+		return Payload;
+	}
+}
+
+TEST_CASE("LogoDownloaderMMT", "[mmt][logo][filter]")
+{
+	using namespace LibISDB;
+
+	auto pParser = std::make_unique<StreamPacketParserFilter>();
+	auto pLogo = std::make_unique<LogoDownloaderFilter>();
+	LogoRecorder Recorder;
+	pLogo->SetLogoHandler(&Recorder);
+	pParser->SetOutputFilter(pLogo.get(), pLogo->GetInputSink());
+	REQUIRE(pParser->StartStreaming());
+
+	std::uint32_t Sequence = 0;
+	auto Signaling = [&](std::uint16_t PacketID, std::uint16_t MessageID, const ByteArray &Section) {
+		return MakeMMTPTLV(PacketID, Sequence++, 0x02, MakeSignalingPayload(0, MakeMessage16(MessageID, Section)));
+	};
+	auto CDT = [&](std::uint8_t Version, std::uint8_t SectionNumber, std::uint8_t LastSectionNumber,
+			std::uint8_t LogoType, std::uint16_t LogoVersion, const ByteArray &Data) {
+		return Signaling(0x8006, 0x8000,
+			MakeLogoCDTSection(0x0123, Version, SectionNumber, LastSectionNumber, LogoType, 0x0123, LogoVersion, Data));
+	};
+	auto SDT = [&](std::uint8_t Version, const std::vector<std::pair<std::uint16_t, ByteArray>> &ServiceList) {
+		return Signaling(0x8004, 0x8000, MakeSection(0x9F, 0xB110, Version, 0, 0, MakeLogoSDTPayload(ServiceList)));
+	};
+
+	const ByteArray Logo2K(10, 0x05_u8);
+	const ByteArray LogoSmall(20, 0x06_u8);
+	const ByteArray LogoLarge1(30, 0x07_u8);
+	const ByteArray LogoLarge2(5, 0x17_u8);
+	const ByteArray Descriptor = MakeLogoCDT1Descriptor(0x0123, 2, 0x0123, {0x05, 0, 1, 0x06, 1, 1, 0x07, 2, 2});
+	const ByteArray TOT = Signaling(0x8005, 0x8002, MakeShortSection(0xA1, HexBytes("EF9E051916F000")));
+	const std::vector<ByteArray> CDTPackets {
+		CDT(4, 0, 3, 0x05, 2, Logo2K),
+		CDT(4, 1, 3, 0x06, 2, LogoSmall),
+		CDT(4, 2, 3, 0x07, 2, LogoLarge1),
+		CDT(4, 3, 3, 0x07, 2, LogoLarge2),
+	};
+
+	SECTION("MHCDTTable") {
+		std::unique_ptr<MMTSectionTable> pTable(new MMTSectionTable(new MHCDTMultiTable));
+		TLVPacket Packet;
+		ToTLVPacket(CDTPackets[2], &Packet);
+		pTable->StorePacket(&Packet);
+
+		// data_size がモジュールの残りより大きい
+		ByteArray Broken;
+		Append(Broken, HexBytes("000B01F00005FF24F0000010"));
+		Append(Broken, HexBytes("01020304"));
+		ToTLVPacket(Signaling(0x8006, 0x8000, MakeSection(0xA2, 0x0124, 0, 0, 0, Broken)), &Packet);
+		pTable->StorePacket(&Packet);
+
+		const MHCDTMultiTable *pCDT = pTable->GetTable<MHCDTMultiTable>();
+		REQUIRE(pCDT != nullptr);
+		CHECK(pCDT->GetDownloadDataIndex(0x0999) < 0);
+		const int Index = pCDT->GetDownloadDataIndex(0x0123);
+		REQUIRE(Index >= 0);
+		CHECK(pCDT->GetSectionCount(Index) == 4);
+		CHECK(pCDT->GetCDTTable(Index, 0) == nullptr);
+		const MHCDTTable *pSection = pCDT->GetCDTTable(Index, 2);
+		REQUIRE(pSection != nullptr);
+		CHECK(pSection->GetDownloadDataID() == 0x0123);
+		CHECK(pSection->GetVersionNumber() == 4);
+		CHECK(pSection->GetOriginalNetworkID() == 0x000B);
+		CHECK(pSection->GetDataType() == MHCDTTable::DATA_TYPE_LOGO);
+		MHCDTTable::LogoModuleInfo Module;
+		REQUIRE(pSection->GetLogoModule(&Module));
+		CHECK(Module.LogoType == 0x07);
+		CHECK(Module.LogoID == 0x0123);
+		CHECK(Module.LogoVersion == 2);
+		CHECK(ByteArray(Module.pData, Module.pData + Module.DataSize) == LogoLarge1);
+
+		const MHCDTTable *pBroken = pCDT->GetCDTTable(pCDT->GetDownloadDataIndex(0x0124), 0);
+		REQUIRE(pBroken != nullptr);
+		CHECK_FALSE(pBroken->GetLogoModule(&Module));
+	}
+
+	SECTION("CDT1") {
+		// MH-SDT より先に届いた MH-CDT も使う
+		InputFilter(*pParser, Concat({TOT, CDTPackets[0], CDTPackets[1], CDTPackets[2]}), 4096);
+		CHECK(Recorder.Logos.empty());
+
+		InputFilter(*pParser, SDT(1, {{0x0400, Descriptor}}), 4096);
+		REQUIRE(Recorder.Logos.size() == 2);
+		CHECK(Recorder.Logos[0].NetworkID == 0x000B);
+		CHECK(Recorder.Logos[0].LogoID == 0x0123);
+		CHECK(Recorder.Logos[0].LogoVersion == 2);
+		CHECK(Recorder.Logos[0].LogoType == 0x05);
+		CHECK(Recorder.Logos[0].Data == Logo2K);
+		REQUIRE(Recorder.Logos[0].ServiceList.size() == 1);
+		CHECK(Recorder.Logos[0].ServiceList[0].NetworkID == 0x000B);
+		CHECK(Recorder.Logos[0].ServiceList[0].TransportStreamID == 0xB110);
+		CHECK(Recorder.Logos[0].ServiceList[0].ServiceID == 0x0400);
+		CHECK(Recorder.Logos[0].Time.Hour == 5);
+		CHECK(Recorder.Logos[0].Time.Minute == 19);
+		CHECK(Recorder.Logos[1].LogoType == 0x06);
+		CHECK(Recorder.Logos[1].Data == LogoSmall);
+
+		// 複数セクションのロゴは全部揃ってから連結する
+		InputFilter(*pParser, CDTPackets[3], 4096);
+		REQUIRE(Recorder.Logos.size() == 3);
+		CHECK(Recorder.Logos[2].LogoType == 0x07);
+		CHECK(Recorder.Logos[2].Data == Concat({LogoLarge1, LogoLarge2}));
+
+		// ロゴに関係しない MH-SDT の更新では再通知しない
+		InputFilter(*pParser, Concat({SDT(2, {{0x0400, Descriptor}}), Concat(CDTPackets)}), 4096);
+		CHECK(Recorder.Logos.size() == 3);
+
+		pLogo->Reset();
+		InputFilter(*pParser, Concat({SDT(2, {{0x0400, Descriptor}}), Concat(CDTPackets)}), 4096);
+		CHECK(Recorder.Logos.size() == 6);
+	}
+
+	SECTION("Mismatch") {
+		// 記述子と data_module_byte の logo_version が違う間は通知しない
+		InputFilter(*pParser, Concat({
+			TOT,
+			SDT(1, {{0x0400, MakeLogoCDT1Descriptor(0x0123, 3, 0x0123, {0x05, 0, 1})}}),
+			CDTPackets[0],
+			CDTPackets[1]}), 4096);
+		CHECK(Recorder.Logos.empty());
+
+		InputFilter(*pParser, CDT(5, 0, 0, 0x05, 3, Logo2K), 4096);
+		REQUIRE(Recorder.Logos.size() == 1);
+		CHECK(Recorder.Logos[0].LogoVersion == 3);
+		CHECK(Recorder.Logos[0].LogoType == 0x05);
+	}
+
+	SECTION("CDT2") {
+		// CDT 伝送方式 2 で同じ logo_id を参照するサービスも対象に含める
+		ByteArray CDT2 {0x02};
+		Append16(CDT2, 0xFF23);
+		InputFilter(*pParser, Concat({
+			TOT,
+			SDT(1, {{0x0400, MakeLogoCDT1Descriptor(0x0123, 2, 0x0123, {0x05, 0, 1})}, {0x0401, CDT2}}),
+			CDTPackets[0],
+			CDTPackets[1]}), 4096);
+		REQUIRE(Recorder.Logos.size() == 1);
+		REQUIRE(Recorder.Logos[0].ServiceList.size() == 2);
+		CHECK(Recorder.Logos[0].ServiceList[0].ServiceID == 0x0400);
+		CHECK(Recorder.Logos[0].ServiceList[1].ServiceID == 0x0401);
+	}
+}
+
 
 
 

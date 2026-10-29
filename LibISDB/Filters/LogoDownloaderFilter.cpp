@@ -28,6 +28,7 @@
 #include "LogoDownloaderFilter.hpp"
 #include "../TS/TSDownload.hpp"
 #include "../TS/Tables.hpp"
+#include "../MMT/MMTTables.hpp"
 #include "../Utilities/Utilities.hpp"
 #include "../Utilities/StringUtilities.hpp"
 #include <functional>
@@ -346,6 +347,17 @@ void LogoDownloaderFilter::Reset()
 	m_ServiceList.clear();
 
 	m_VersionMap.clear();
+
+	m_MMTPacketIDMapManager.UnmapAllTargets();
+	m_MMTPacketIDMapManager.MapTarget(
+		MMT_PACKET_ID_MH_SDT,
+		MMTSectionTable::CreateWithHandler<MHSDTTable>(&LogoDownloaderFilter::OnMHSDTSection, this));
+	m_MMTPacketIDMapManager.MapTarget(
+		MMT_PACKET_ID_MH_CDT,
+		MMTSectionTable::CreateWithHandler<MHCDTMultiTable>(&LogoDownloaderFilter::OnMHCDTSection, this));
+	m_MMTPacketIDMapManager.MapTarget(MMT_PACKET_ID_MH_TOT, new MMTSectionTable(new MHTOTTable));
+
+	m_MMTLogoStatusMap.clear();
 }
 
 
@@ -353,6 +365,8 @@ bool LogoDownloaderFilter::ProcessData(DataStream *pData)
 {
 	if (pData->Is<TSPacket>())
 		m_PIDMapManager.StorePacketStream(pData);
+	else if (pData->Is<TLVPacket>())
+		m_MMTPacketIDMapManager.StorePacketStream(pData);
 
 	return true;
 }
@@ -623,6 +637,168 @@ bool LogoDownloaderFilter::UnmapDataES(int Index)
 bool LogoDownloaderFilter::GetTOTTime(DateTime *pTime)
 {
 	const TOTTable *pTOTTable = m_PIDMapManager.GetMapTarget<TOTTable>(PID_TOT);
+	if ((pTOTTable == nullptr) || !pTOTTable->GetDateTime(pTime)) {
+		pTime->Reset();
+		return false;
+	}
+	return true;
+}
+
+
+void LogoDownloaderFilter::OnMHSDTSection(const PSITableBase *pTable, const PSISection *pSection)
+{
+	UpdateMMTLogo();
+}
+
+
+void LogoDownloaderFilter::OnMHCDTSection(const PSITableBase *pTable, const PSISection *pSection)
+{
+	UpdateMMTLogo();
+}
+
+
+void LogoDownloaderFilter::UpdateMMTLogo()
+{
+	// ARIB TR-B39 第 1 編 6.2.2.1
+	// MH-SDT の MH-ロゴ伝送記述子 (CDT 伝送方式 1) が示すセクションが揃い、
+	// data_module_byte の logo_type / logo_id / logo_version が記述子と一致したら通知する
+
+	if (m_pLogoHandler == nullptr)
+		return;
+
+	const MMTSectionTable *pSDTSectionTable = m_MMTPacketIDMapManager.GetMapTarget<MMTSectionTable>(MMT_PACKET_ID_MH_SDT);
+	const MMTSectionTable *pCDTSectionTable = m_MMTPacketIDMapManager.GetMapTarget<MMTSectionTable>(MMT_PACKET_ID_MH_CDT);
+	if ((pSDTSectionTable == nullptr) || (pCDTSectionTable == nullptr))
+		return;
+	const MHSDTTable *pSDTTable = pSDTSectionTable->GetTable<MHSDTTable>();
+	const MHCDTMultiTable *pCDTTable = pCDTSectionTable->GetTable<MHCDTMultiTable>();
+	if ((pSDTTable == nullptr) || (pCDTTable == nullptr))
+		return;
+
+	const int ServiceCount = pSDTTable->GetServiceCount();
+
+	auto GetLogoDesc = [pSDTTable](int Index) -> const MHLogoTransmissionDescriptor * {
+		const MMTDescriptorBlock *pDescBlock = pSDTTable->GetItemDescriptorBlock(Index);
+		if (pDescBlock == nullptr)
+			return nullptr;
+		return pDescBlock->GetDescriptor<MHLogoTransmissionDescriptor>();
+	};
+	auto IsCDT1 = [](const MHLogoTransmissionDescriptor *pDesc) {
+		return (pDesc != nullptr)
+			&& (pDesc->GetLogoTransmissionType() == MHLogoTransmissionDescriptor::TRANSMISSION_CDT1);
+	};
+
+	for (int i = 0; i < ServiceCount; i++) {
+		const MHLogoTransmissionDescriptor *pLogoDesc = GetLogoDesc(i);
+		if (!IsCDT1(pLogoDesc))
+			continue;
+
+		const uint16_t DownloadDataID = pLogoDesc->GetDownloadDataID();
+		const uint16_t LogoID = pLogoDesc->GetLogoID();
+		const uint16_t LogoVersion = pLogoDesc->GetLogoVersion();
+
+		bool Processed = false;
+		for (int j = 0; j < i; j++) {
+			const MHLogoTransmissionDescriptor *pDesc = GetLogoDesc(j);
+			if (IsCDT1(pDesc)
+					&& (pDesc->GetDownloadDataID() == DownloadDataID)
+					&& (pDesc->GetLogoID() == LogoID)
+					&& (pDesc->GetLogoVersion() == LogoVersion)) {
+				Processed = true;
+				break;
+			}
+		}
+		if (Processed)
+			continue;
+
+		const int CDTIndex = pCDTTable->GetDownloadDataIndex(DownloadDataID);
+		if (CDTIndex < 0)
+			continue;
+
+		// CDT 伝送方式 2 は同じ TLV ストリームの他サービスのロゴを logo_id で参照する
+		std::vector<LogoService> ServiceList;
+		for (int j = 0; j < ServiceCount; j++) {
+			const MHLogoTransmissionDescriptor *pDesc = GetLogoDesc(j);
+			if ((pDesc == nullptr) || (pDesc->GetLogoID() != LogoID))
+				continue;
+			if ((IsCDT1(pDesc) && (pDesc->GetDownloadDataID() == DownloadDataID))
+					|| (pDesc->GetLogoTransmissionType() == MHLogoTransmissionDescriptor::TRANSMISSION_CDT2)) {
+				LogoService &Service = ServiceList.emplace_back();
+				Service.NetworkID = pSDTTable->GetOriginalNetworkID();
+				Service.TransportStreamID = pSDTTable->GetTLVStreamID();
+				Service.ServiceID = pSDTTable->GetServiceID(j);
+			}
+		}
+
+		for (int k = 0; k < pLogoDesc->GetLogoCount(); k++) {
+			MHLogoTransmissionDescriptor::LogoInfo Info;
+			if (!pLogoDesc->GetLogoInfo(k, &Info) || (Info.NumOfSections == 0))
+				continue;
+
+			m_MMTLogoBuffer.clear();
+			const MHCDTTable *pFirstSection = nullptr;
+			bool Complete = true;
+
+			const unsigned int EndSection = static_cast<unsigned int>(Info.StartSectionNumber) + Info.NumOfSections;
+			for (unsigned int s = Info.StartSectionNumber; s < EndSection; s++) {
+				const MHCDTTable *pSection = pCDTTable->GetCDTTable(CDTIndex, static_cast<uint16_t>(s));
+				MHCDTTable::LogoModuleInfo Module;
+				if ((pSection == nullptr)
+						|| !pSection->GetLogoModule(&Module)
+						|| (Module.LogoType != Info.LogoType)
+						|| (Module.LogoID != LogoID)
+						|| (Module.LogoVersion != LogoVersion)) {
+					Complete = false;
+					break;
+				}
+				if (pFirstSection == nullptr)
+					pFirstSection = pSection;
+				m_MMTLogoBuffer.insert(m_MMTLogoBuffer.end(), Module.pData, Module.pData + Module.DataSize);
+			}
+
+			if (!Complete || m_MMTLogoBuffer.empty() || (m_MMTLogoBuffer.size() > 0xFFFF))
+				continue;
+
+			const uint32_t Key = (static_cast<uint32_t>(DownloadDataID) << 8) | Info.LogoType;
+			const uint8_t CDTVersion = pFirstSection->GetVersionNumber();
+			auto it = m_MMTLogoStatusMap.find(Key);
+			if ((it != m_MMTLogoStatusMap.end())
+					&& (it->second.LogoID == LogoID)
+					&& (it->second.LogoVersion == LogoVersion)
+					&& (it->second.CDTVersion == CDTVersion)
+					&& (it->second.ServiceList == ServiceList))
+				continue;
+
+			MMTLogoStatus &Status = m_MMTLogoStatusMap[Key];
+			Status.LogoID = LogoID;
+			Status.LogoVersion = LogoVersion;
+			Status.CDTVersion = CDTVersion;
+			Status.ServiceList = ServiceList;
+
+			LIBISDB_TRACE(
+				LIBISDB_STR("MH-CDT logo : download_data_id {:04X} / logo_id {:03X} / version {:03X} / type {:02X} / {} bytes\n"),
+				DownloadDataID, LogoID, LogoVersion, Info.LogoType, m_MMTLogoBuffer.size());
+
+			LogoData Data;
+			Data.NetworkID = pFirstSection->GetOriginalNetworkID();
+			Data.ServiceList = ServiceList;
+			Data.LogoID = LogoID;
+			Data.LogoVersion = LogoVersion;
+			Data.LogoType = Info.LogoType;
+			Data.DataSize = static_cast<uint16_t>(m_MMTLogoBuffer.size());
+			Data.pData = m_MMTLogoBuffer.data();
+			GetMHTOTTime(&Data.Time);
+
+			m_pLogoHandler->OnLogoDownloaded(Data);
+		}
+	}
+}
+
+
+bool LogoDownloaderFilter::GetMHTOTTime(DateTime *pTime) const
+{
+	const MMTSectionTable *pSectionTable = m_MMTPacketIDMapManager.GetMapTarget<MMTSectionTable>(MMT_PACKET_ID_MH_TOT);
+	const MHTOTTable *pTOTTable = (pSectionTable != nullptr) ? pSectionTable->GetTable<MHTOTTable>() : nullptr;
 	if ((pTOTTable == nullptr) || !pTOTTable->GetDateTime(pTime)) {
 		pTime->Reset();
 		return false;

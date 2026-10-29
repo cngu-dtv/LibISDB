@@ -37,12 +37,14 @@
 #include "../LibISDB/Filters/MMTAnalyzerFilter.hpp"
 #include "../LibISDB/Filters/CaptionFilter.hpp"
 #include "../LibISDB/Filters/EPGDatabaseFilter.hpp"
+#include "../LibISDB/Filters/LogoDownloaderFilter.hpp"
 #include "../LibISDB/MMT/MPUAssembler.hpp"
 #include "../LibISDB/MMT/TTMLCaption.hpp"
 #include "../LibISDB/TS/TSInformation.hpp"
 #include "../LibISDB/Base/StandardStream.hpp"
 #include "../LibISDB/Utilities/StringFormat.hpp"
 #include "../LibISDB/Utilities/StringUtilities.hpp"
+#include "../LibISDB/Utilities/Utilities.hpp"
 #include <iostream>
 #include <iomanip>
 #include <map>
@@ -547,6 +549,47 @@ private:
 };
 
 
+/** ロゴ取得フィルタの出力を記録する */
+class LogoRecorder
+	: public LibISDB::LogoDownloaderFilter::LogoHandler
+{
+public:
+	struct LogoInfo {
+		std::uint16_t NetworkID;
+		std::vector<LibISDB::LogoDownloaderFilter::LogoService> ServiceList;
+		std::uint16_t LogoID;
+		std::uint16_t LogoVersion;
+		std::uint8_t LogoType;
+		std::uint16_t DataSize;
+		bool IsPNG;
+		std::uint32_t Width;
+		std::uint32_t Height;
+		LibISDB::DateTime Time;
+	};
+
+	std::vector<LogoInfo> LogoList;
+
+private:
+	void OnLogoDownloaded(const LibISDB::LogoDownloaderFilter::LogoData &Data) override
+	{
+		static const std::uint8_t PNGSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+
+		LogoInfo &Info = LogoList.emplace_back();
+
+		Info.NetworkID = Data.NetworkID;
+		Info.ServiceList = Data.ServiceList;
+		Info.LogoID = Data.LogoID;
+		Info.LogoVersion = Data.LogoVersion;
+		Info.LogoType = Data.LogoType;
+		Info.DataSize = Data.DataSize;
+		Info.IsPNG = (Data.DataSize >= 24) && (std::memcmp(Data.pData, PNGSignature, 8) == 0);
+		Info.Width = Info.IsPNG ? LibISDB::Load32(&Data.pData[16]) : 0;
+		Info.Height = Info.IsPNG ? LibISDB::Load32(&Data.pData[20]) : 0;
+		Info.Time = Data.Time;
+	}
+};
+
+
 LibISDB::String FormatDateTime(const LibISDB::DateTime &Time)
 {
 	if (!Time.IsValid())
@@ -890,6 +933,35 @@ template<typename TStream> void PrintCaptions(TStream &Out, const CaptionRecorde
 }
 
 
+template<typename TStream> void PrintLogos(TStream &Out, const LogoRecorder &Logos)
+{
+	Out << LIBISDB_STR("Logo : ") << Logos.LogoList.size() << std::endl;
+
+	for (const LogoRecorder::LogoInfo &Logo : Logos.LogoList) {
+		Out << LIBISDB_STR("  network ");
+		PrintHex(Out, Logo.NetworkID, 4);
+		Out << LIBISDB_STR(" / logo_id ");
+		PrintHex(Out, Logo.LogoID, 3);
+		Out << LIBISDB_STR(" / version ");
+		PrintHex(Out, Logo.LogoVersion, 3);
+		Out << LIBISDB_STR(" / type ");
+		PrintHex(Out, Logo.LogoType, 2);
+		Out << LIBISDB_STR(" : ") << Logo.DataSize << LIBISDB_STR(" bytes");
+		if (Logo.IsPNG)
+			Out << LIBISDB_STR(" PNG ") << Logo.Width << LIBISDB_STR("x") << Logo.Height;
+		Out << LIBISDB_STR(" / ") << FormatDateTime(Logo.Time) << LIBISDB_STR(" / services");
+		for (const auto &Service : Logo.ServiceList) {
+			Out << LIBISDB_STR(" ");
+			PrintHex(Out, Service.ServiceID, 4);
+			Out << LIBISDB_STR(" (TLV stream ");
+			PrintHex(Out, Service.TransportStreamID, 4);
+			Out << LIBISDB_STR(")");
+		}
+		Out << std::endl;
+	}
+}
+
+
 template<typename TStream> void PrintEPG(TStream &Out, LibISDB::EPGDatabase *pDatabase)
 {
 	LibISDB::EPGDatabase::ServiceList ServiceList;
@@ -974,6 +1046,9 @@ int main(int argc, char **argv)
 	pEPGDatabase->SetNoPastEvents(false);
 	LibISDB::EPGDatabaseFilter *pEPGDatabaseFilter = new LibISDB::EPGDatabaseFilter;
 	pEPGDatabaseFilter->SetEPGDatabase(pEPGDatabase);
+	LibISDB::LogoDownloaderFilter *pLogoDownloader = new LibISDB::LogoDownloaderFilter;
+	LogoRecorder Logos;
+	pLogoDownloader->SetLogoHandler(&Logos);
 
 #define ASYNC
 #ifdef ASYNC
@@ -995,7 +1070,8 @@ int main(int argc, char **argv)
 		pAnalyzer,
 		pMediaStats,
 		pCaption,
-		pEPGDatabaseFilter
+		pEPGDatabaseFilter,
+		pLogoDownloader
 		});
 	Engine.SetStartStreamingOnSourceOpen(true);
 
@@ -1132,6 +1208,9 @@ int main(int argc, char **argv)
 
 	Out << std::endl;
 	PrintEPG(Out, pEPGDatabase);
+
+	Out << std::endl;
+	PrintLogos(Out, Logos);
 
 	return 0;
 }

@@ -746,6 +746,124 @@ bool MHEITPfScheduleTable::ResetScheduleService(
 
 
 
+MHCDTTable::MHCDTTable()
+{
+	Reset();
+}
+
+
+void MHCDTTable::Reset()
+{
+	PSISingleTable::Reset();
+
+	m_OriginalNetworkID = NETWORK_ID_INVALID;
+	m_DataType = DATA_TYPE_INVALID;
+	m_DescriptorBlock.Reset();
+	m_DataModuleOffset = 0;
+}
+
+
+uint16_t MHCDTTable::GetDataModuleSize() const noexcept
+{
+	const uint16_t PayloadSize = m_CurSection.GetPayloadSize();
+	if ((m_DataModuleOffset == 0) || (PayloadSize <= m_DataModuleOffset))
+		return 0;
+	return PayloadSize - m_DataModuleOffset;
+}
+
+
+const uint8_t * MHCDTTable::GetDataModuleData() const noexcept
+{
+	if (GetDataModuleSize() == 0)
+		return nullptr;
+	return m_CurSection.GetPayloadData() + m_DataModuleOffset;
+}
+
+
+bool MHCDTTable::GetLogoModule(ReturnArg<LogoModuleInfo> Info) const
+{
+	if (!Info)
+		return false;
+	if (m_DataType != DATA_TYPE_LOGO)
+		return false;
+
+	const uint16_t ModuleSize = GetDataModuleSize();
+	const uint8_t *pModule = GetDataModuleData();
+
+	if ((pModule == nullptr) || (ModuleSize < 7))
+		return false;
+
+	const uint16_t DataSize = Load16(&pModule[5]);
+	if (DataSize > ModuleSize - 7)
+		return false;
+
+	Info->LogoType    = pModule[0];
+	Info->LogoID      = Load16(&pModule[1]) & 0x01FF_u16;
+	Info->LogoVersion = Load16(&pModule[3]) & 0x0FFF_u16;
+	Info->DataSize    = DataSize;
+	Info->pData       = &pModule[7];
+
+	return true;
+}
+
+
+bool MHCDTTable::OnTableUpdate(const PSISection *pCurSection, const PSISection *pOldSection)
+{
+	if (pCurSection->GetTableID() != TABLE_ID)
+		return false;
+
+	const uint16_t DataSize = pCurSection->GetPayloadSize();
+	const uint8_t *pData = pCurSection->GetPayloadData();
+
+	if (DataSize < 5)
+		return false;
+
+	const uint16_t DescriptorsLength = Load16(&pData[3]) & 0x0FFF_u16;
+	if (5 + DescriptorsLength > DataSize)
+		return false;
+
+	m_OriginalNetworkID = Load16(&pData[0]);
+	m_DataType          = pData[2];
+	m_DescriptorBlock.ParseBlock(&pData[5], DescriptorsLength);
+	m_DataModuleOffset  = 5 + DescriptorsLength;
+
+	return true;
+}
+
+
+
+
+int MHCDTMultiTable::GetDownloadDataIndex(uint16_t DownloadDataID) const
+{
+	return GetTableIndexByUniqueID(DownloadDataID);
+}
+
+
+const MHCDTTable * MHCDTMultiTable::GetCDTTable(int Index, uint16_t SectionNumber) const
+{
+	const MHCDTTable *pTable = dynamic_cast<const MHCDTTable *>(GetSection(Index, SectionNumber));
+	if ((pTable == nullptr) || (pTable->GetDataType() == MHCDTTable::DATA_TYPE_INVALID))
+		return nullptr;
+	return pTable;
+}
+
+
+bool MHCDTMultiTable::OnPSISection(const PSISectionParser *pSectionParser, const PSISection *pSection)
+{
+	if (pSection->GetTableID() != MHCDTTable::TABLE_ID)
+		return false;
+	return PSITable::OnPSISection(pSectionParser, pSection);
+}
+
+
+PSITableBase * MHCDTMultiTable::CreateSectionTable(const PSISection *pSection)
+{
+	return new MHCDTTable;
+}
+
+
+
+
 MHBITTable::MHBITTable()
 {
 	Reset();
