@@ -132,21 +132,23 @@ const MMTDescriptorBase * MMTDescriptorBlock::GetDescriptorByTag(uint16_t Tag) c
 MMTDescriptorBase * MMTDescriptorBlock::CreateDescriptorInstance(uint16_t Tag)
 {
 	switch (Tag) {
-	case MMTAccessControlDescriptor::TAG   : return new MMTAccessControlDescriptor;
-	case VideoComponentDescriptor::TAG     : return new VideoComponentDescriptor;
-	case MHStreamIdentifierDescriptor::TAG : return new MHStreamIdentifierDescriptor;
-	case MHContentDescriptor::TAG          : return new MHContentDescriptor;
-	case MHAudioComponentDescriptor::TAG   : return new MHAudioComponentDescriptor;
-	case MHSeriesDescriptor::TAG           : return new MHSeriesDescriptor;
-	case MHEventGroupDescriptor::TAG       : return new MHEventGroupDescriptor;
-	case MHServiceListDescriptor::TAG      : return new MHServiceListDescriptor;
-	case MHBroadcasterNameDescriptor::TAG  : return new MHBroadcasterNameDescriptor;
-	case MHServiceDescriptor::TAG          : return new MHServiceDescriptor;
-	case MHDataComponentDescriptor::TAG    : return new MHDataComponentDescriptor;
-	case MHLocalTimeOffsetDescriptor::TAG  : return new MHLocalTimeOffsetDescriptor;
-	case MHLogoTransmissionDescriptor::TAG : return new MHLogoTransmissionDescriptor;
-	case MHShortEventDescriptor::TAG       : return new MHShortEventDescriptor;
-	case MHExtendedEventDescriptor::TAG    : return new MHExtendedEventDescriptor;
+	case MPUTimestampDescriptor::TAG         : return new MPUTimestampDescriptor;
+	case MMTAccessControlDescriptor::TAG     : return new MMTAccessControlDescriptor;
+	case VideoComponentDescriptor::TAG       : return new VideoComponentDescriptor;
+	case MHStreamIdentifierDescriptor::TAG   : return new MHStreamIdentifierDescriptor;
+	case MHContentDescriptor::TAG            : return new MHContentDescriptor;
+	case MHAudioComponentDescriptor::TAG     : return new MHAudioComponentDescriptor;
+	case MHSeriesDescriptor::TAG             : return new MHSeriesDescriptor;
+	case MHEventGroupDescriptor::TAG         : return new MHEventGroupDescriptor;
+	case MHServiceListDescriptor::TAG        : return new MHServiceListDescriptor;
+	case MHBroadcasterNameDescriptor::TAG    : return new MHBroadcasterNameDescriptor;
+	case MHServiceDescriptor::TAG            : return new MHServiceDescriptor;
+	case MHDataComponentDescriptor::TAG      : return new MHDataComponentDescriptor;
+	case MHLocalTimeOffsetDescriptor::TAG    : return new MHLocalTimeOffsetDescriptor;
+	case MHLogoTransmissionDescriptor::TAG   : return new MHLogoTransmissionDescriptor;
+	case MPUExtendedTimestampDescriptor::TAG : return new MPUExtendedTimestampDescriptor;
+	case MHShortEventDescriptor::TAG         : return new MHShortEventDescriptor;
+	case MHExtendedEventDescriptor::TAG      : return new MHExtendedEventDescriptor;
 	}
 
 	return new MMTDescriptorBase;

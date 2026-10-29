@@ -35,6 +35,10 @@
 #include "../LibISDB/Filters/StreamPacketParserFilter.hpp"
 #include "../LibISDB/Filters/AsyncStreamingFilter.hpp"
 #include "../LibISDB/Filters/MMTAnalyzerFilter.hpp"
+#include "../LibISDB/Filters/CaptionFilter.hpp"
+#include "../LibISDB/Filters/EPGDatabaseFilter.hpp"
+#include "../LibISDB/MMT/MPUAssembler.hpp"
+#include "../LibISDB/MMT/TTMLCaption.hpp"
 #include "../LibISDB/TS/TSInformation.hpp"
 #include "../LibISDB/Base/StandardStream.hpp"
 #include "../LibISDB/Utilities/StringFormat.hpp"
@@ -42,6 +46,7 @@
 #include <iostream>
 #include <iomanip>
 #include <map>
+#include <cstring>
 
 #if defined(LIBISDB_WINDOWS) && defined(LIBISDB_WCHAR)
 #include <fcntl.h>
@@ -295,6 +300,253 @@ public:
 };
 
 
+/** 全アセットの MPU を組み立てて集計するフィルタ */
+class MediaStatsFilter
+	: public LibISDB::SingleIOFilter
+	, protected LibISDB::MPUAssembler::Handler
+{
+public:
+	struct AssetStats {
+		std::uint32_t AssetType = 0;
+		LibISDB::MPUAssembler::MediaType MediaType = LibISDB::MPUAssembler::MediaType::Generic;
+		unsigned long long Units = 0;
+		unsigned long long RandomAccess = 0;
+		unsigned long long Discontinuity = 0;
+		unsigned long long BadStart = 0;      // AUD で始まらない映像のアクセスユニット
+		unsigned long long DTSOrderError = 0; // DTS が増えていない
+		unsigned long long PTSBeforeDTS = 0;
+		unsigned long long Subsamples = 0;
+		bool HasTimestamp = false;
+		bool LastHasTimestamp = false;
+		std::int64_t FirstDTS = 0;
+		std::int64_t LastDTS = 0;
+		std::int64_t MinInterval = 0;
+		std::int64_t MaxInterval = 0;
+		std::size_t MaxSize = 0;
+	};
+
+	MediaStatsFilter()
+	{
+		Reset();
+	}
+
+	const LibISDB::CharType * GetObjectName() const noexcept override { return LIBISDB_STR("MediaStatsFilter"); }
+
+	void Reset() override
+	{
+		LibISDB::BlockLock Lock(m_FilterLock);
+
+		m_PacketIDMapManager.UnmapAllTargets();
+		m_MPTPacketIDList.clear();
+		m_Stats.clear();
+		m_PacketIDMapManager.MapTarget(
+			LibISDB::MMT_PACKET_ID_PA,
+			LibISDB::MMTSingleTable::CreateWithHandler<LibISDB::PLTable>(&MediaStatsFilter::OnPLTTable, this));
+	}
+
+	void Finish()
+	{
+		LibISDB::BlockLock Lock(m_FilterLock);
+
+		for (auto &e : m_Stats) {
+			LibISDB::MPUAssemblerTarget *pTarget = m_PacketIDMapManager.GetMapTarget<LibISDB::MPUAssemblerTarget>(e.first);
+			if (pTarget != nullptr)
+				pTarget->GetAssembler().Flush();
+		}
+	}
+
+	const std::map<std::uint16_t, AssetStats> & GetStats() const noexcept { return m_Stats; }
+
+	const LibISDB::MPUAssembler * GetAssembler(std::uint16_t PacketID) const
+	{
+		const LibISDB::MPUAssemblerTarget *pTarget = m_PacketIDMapManager.GetMapTarget<LibISDB::MPUAssemblerTarget>(PacketID);
+		return (pTarget != nullptr) ? &pTarget->GetAssembler() : nullptr;
+	}
+
+private:
+	bool ProcessData(LibISDB::DataStream *pData) override
+	{
+		if (pData->Is<LibISDB::TLVPacket>())
+			m_PacketIDMapManager.StorePacketStream(pData);
+		return true;
+	}
+
+	void OnAccessUnit(const LibISDB::MPUAssembler *pAssembler, const LibISDB::MPUAssembler::AccessUnitInfo &Info) override
+	{
+		AssetStats &Stats = m_Stats[Info.PacketID];
+
+		Stats.Units++;
+		if (Info.RandomAccess)
+			Stats.RandomAccess++;
+		if (Info.Discontinuity)
+			Stats.Discontinuity++;
+		if (Info.DataSize > Stats.MaxSize)
+			Stats.MaxSize = Info.DataSize;
+		if (pAssembler->GetMediaType() == LibISDB::MPUAssembler::MediaType::Video) {
+			static const std::uint8_t StartCode[] = {0x00, 0x00, 0x00, 0x01};
+			if ((Info.DataSize < sizeof(StartCode) + 2)
+					|| (std::memcmp(Info.pData, StartCode, sizeof(StartCode)) != 0)
+					|| (((Info.pData[4] >> 1) & 0x3F) != LibISDB::HEVC_NAL_UNIT_TYPE_AUD))
+				Stats.BadStart++;
+		}
+		if (Info.HasTimestamp) {
+			if (Info.PTS < Info.DTS)
+				Stats.PTSBeforeDTS++;
+			if (Stats.HasTimestamp) {
+				const std::int64_t Interval = Info.DTS - Stats.LastDTS;
+				if (Interval <= 0)
+					Stats.DTSOrderError++;
+				// 直前のアクセスユニットとの間隔だけを数える
+				if (Stats.LastHasTimestamp && !Info.Discontinuity) {
+					if ((Stats.MinInterval == 0) || (Interval < Stats.MinInterval))
+						Stats.MinInterval = Interval;
+					if (Interval > Stats.MaxInterval)
+						Stats.MaxInterval = Interval;
+				}
+			} else {
+				Stats.HasTimestamp = true;
+				Stats.FirstDTS = Info.DTS;
+			}
+			Stats.LastDTS = Info.DTS;
+		}
+		Stats.LastHasTimestamp = Info.HasTimestamp;
+	}
+
+	void OnCaptionUnit(const LibISDB::MPUAssembler *pAssembler, const LibISDB::MPUAssembler::CaptionUnitInfo &Info) override
+	{
+		AssetStats &Stats = m_Stats[Info.PacketID];
+
+		Stats.Units++;
+		Stats.Subsamples += Info.SubsampleList.size();
+		if (Info.Discontinuity)
+			Stats.Discontinuity++;
+		if (Info.HasPresentationTime) {
+			const std::int64_t Time = LibISDB::MPUTimestampTable::NTPTimeTo90kHz(Info.PresentationTime);
+			if (!Stats.HasTimestamp) {
+				Stats.HasTimestamp = true;
+				Stats.FirstDTS = Time;
+			}
+			Stats.LastDTS = Time;
+		}
+	}
+
+	void OnPLTTable(const LibISDB::MMTSingleTable *pTable)
+	{
+		const LibISDB::PLTable *pPLTable = dynamic_cast<const LibISDB::PLTable *>(pTable);
+		if (pPLTable == nullptr)
+			return;
+
+		for (std::uint16_t PacketID : m_MPTPacketIDList)
+			m_PacketIDMapManager.UnmapTarget(PacketID);
+		m_MPTPacketIDList.clear();
+
+		for (int i = 0; i < pPLTable->GetPackageCount(); i++) {
+			const std::uint16_t PacketID = pPLTable->GetMPTPacketID(i);
+			if ((PacketID != LibISDB::MMT_PACKET_ID_INVALID) && (PacketID != LibISDB::MMT_PACKET_ID_PA)) {
+				m_PacketIDMapManager.MapTarget(
+					PacketID,
+					LibISDB::MMTSingleTable::CreateWithHandler<LibISDB::MPTable>(&MediaStatsFilter::OnMPTTable, this));
+				m_MPTPacketIDList.push_back(PacketID);
+			}
+		}
+	}
+
+	void OnMPTTable(const LibISDB::MMTSingleTable *pTable)
+	{
+		const LibISDB::MPTable *pMPTable = dynamic_cast<const LibISDB::MPTable *>(pTable);
+		if (pMPTable == nullptr)
+			return;
+
+		for (int i = 0; i < pMPTable->GetAssetCount(); i++) {
+			const std::uint16_t PacketID = pMPTable->GetAssetPacketID(i);
+			if ((PacketID == LibISDB::MMT_PACKET_ID_INVALID) || (PacketID == LibISDB::MMT_PACKET_ID_PA))
+				continue;
+
+			LibISDB::MPUAssemblerTarget *pTarget = m_PacketIDMapManager.GetMapTarget<LibISDB::MPUAssemblerTarget>(PacketID);
+			if (pTarget == nullptr) {
+				if (m_PacketIDMapManager.GetMapTarget(PacketID) != nullptr)
+					continue;
+				const LibISDB::MPUAssembler::MediaType Type =
+					LibISDB::MPUAssembler::GetMediaTypeFromAssetType(pMPTable->GetAssetType(i));
+				pTarget = new LibISDB::MPUAssemblerTarget(Type, this);
+				m_PacketIDMapManager.MapTarget(PacketID, pTarget);
+				AssetStats &Stats = m_Stats[PacketID];
+				Stats.AssetType = pMPTable->GetAssetType(i);
+				Stats.MediaType = Type;
+			}
+
+			const LibISDB::MPTable::AssetInfo *pAssetInfo = pMPTable->GetAssetInfo(i);
+			pTarget->GetAssembler().UpdateTimestamps(
+				pMPTable->GetAssetDescriptorBlock(i),
+				pAssetInfo->AssetTimescaleFlag ? pAssetInfo->AssetTimescale : 0);
+		}
+	}
+
+	LibISDB::MMTPacketIDMapManager m_PacketIDMapManager;
+	std::vector<std::uint16_t> m_MPTPacketIDList;
+	std::map<std::uint16_t, AssetStats> m_Stats;
+};
+
+
+/** 字幕フィルタの出力を記録する */
+class CaptionRecorder
+	: public LibISDB::CaptionFilter::Handler
+	, public LibISDB::MMTAnalyzerFilter::EventListener
+{
+public:
+	struct CaptionInfo {
+		std::uint16_t PacketID;
+		std::uint32_t MPUSequenceNumber;
+		bool HasPresentationTime;
+		std::uint64_t PresentationTime;
+		bool HasSubtitleInfo;
+		LibISDB::MHDataComponentDescriptor::AribSubtitleInfo SubtitleInfo;
+		std::size_t DocumentSize;
+		std::size_t SubsampleCount;
+		bool Decoded;
+		LibISDB::TTMLCaptionDecoder::ParagraphList Paragraphs;
+	};
+
+	unsigned long LanguageUpdateCount = 0;
+	std::uint32_t LanguageCode = 0;
+	std::vector<CaptionInfo> CaptionList;
+
+	CaptionRecorder(LibISDB::CaptionFilter *pFilter) : m_pFilter(pFilter) {}
+
+private:
+	void OnPLTUpdated(LibISDB::MMTAnalyzerFilter *pAnalyzer) override
+	{
+		if (pAnalyzer->GetServiceCount() > 0)
+			m_pFilter->SetTargetStream(pAnalyzer->GetServiceID(0));
+	}
+
+	void OnLanguageUpdate(LibISDB::CaptionFilter *pFilter, LibISDB::CaptionParser *pParser) override
+	{
+		LanguageUpdateCount++;
+		LanguageCode = pFilter->GetLanguageCode(0);
+	}
+
+	void OnTTMLCaption(LibISDB::CaptionFilter *pFilter, const LibISDB::CaptionFilter::TTMLCaptionInfo &Info) override
+	{
+		CaptionInfo &Caption = CaptionList.emplace_back();
+
+		Caption.PacketID = Info.PacketID;
+		Caption.MPUSequenceNumber = Info.MPUSequenceNumber;
+		Caption.HasPresentationTime = Info.HasPresentationTime;
+		Caption.PresentationTime = Info.PresentationTime;
+		Caption.HasSubtitleInfo = Info.HasSubtitleInfo;
+		Caption.SubtitleInfo = Info.SubtitleInfo;
+		Caption.DocumentSize = Info.DocumentSize;
+		Caption.SubsampleCount = Info.pSubsampleList->size();
+		Caption.Decoded =
+			(Info.pDocument != nullptr)
+			&& LibISDB::TTMLCaptionDecoder::Decode(Info.pDocument, Info.DocumentSize, &Caption.Paragraphs);
+	}
+
+	LibISDB::CaptionFilter *m_pFilter;
+};
+
+
 LibISDB::String FormatDateTime(const LibISDB::DateTime &Time)
 {
 	if (!Time.IsValid())
@@ -504,6 +756,185 @@ template<typename TStream> void PrintAnalyzerInfo(
 }
 
 
+LibISDB::String Format90kHzTime(std::int64_t Time)
+{
+	const std::uint64_t Seconds = static_cast<std::uint64_t>(Time / 90000);
+	const std::uint64_t Fraction = (static_cast<std::uint64_t>(Time % 90000) << 32) / 90000;
+	return FormatNTPTime((Seconds << 32) | Fraction);
+}
+
+
+const LibISDB::CharType * GetMediaTypeText(LibISDB::MPUAssembler::MediaType Type)
+{
+	switch (Type) {
+	case LibISDB::MPUAssembler::MediaType::Video:   return LIBISDB_STR("Video");
+	case LibISDB::MPUAssembler::MediaType::Audio:   return LIBISDB_STR("Audio");
+	case LibISDB::MPUAssembler::MediaType::Caption: return LIBISDB_STR("Caption");
+	case LibISDB::MPUAssembler::MediaType::Generic: return LIBISDB_STR("Generic");
+	}
+	return LIBISDB_STR("");
+}
+
+
+template<typename TStream> void PrintMediaStats(TStream &Out, const MediaStatsFilter *pFilter)
+{
+	Out << LIBISDB_STR("MPU assembly :") << std::endl;
+
+	for (const auto &e : pFilter->GetStats()) {
+		const MediaStatsFilter::AssetStats &Stats = e.second;
+
+		Out << LIBISDB_STR("  ");
+		PrintHex(Out, e.first, 4);
+		Out << LIBISDB_STR(" ") << FormatAssetType(Stats.AssetType)
+			<< LIBISDB_STR(" ") << GetMediaTypeText(Stats.MediaType)
+			<< LIBISDB_STR(" : units ") << Stats.Units;
+		if (Stats.MediaType == LibISDB::MPUAssembler::MediaType::Caption)
+			Out << LIBISDB_STR(" / subsamples ") << Stats.Subsamples;
+		else
+			Out << LIBISDB_STR(" / RAP ") << Stats.RandomAccess
+				<< LIBISDB_STR(" / max ") << Stats.MaxSize << LIBISDB_STR(" bytes");
+		Out << LIBISDB_STR(" / discontinuity ") << Stats.Discontinuity;
+		if (Stats.MediaType == LibISDB::MPUAssembler::MediaType::Video)
+			Out << LIBISDB_STR(" / not AUD ") << Stats.BadStart;
+		Out << std::endl;
+
+		const LibISDB::MPUAssembler *pAssembler = pFilter->GetAssembler(e.first);
+		if (pAssembler != nullptr) {
+			const LibISDB::MPUAssembler::StatisticsInfo &Info = pAssembler->GetStatistics();
+			Out << LIBISDB_STR("      packets ") << Info.PacketCount
+				<< LIBISDB_STR(" / scrambled ") << Info.ScrambledCount
+				<< LIBISDB_STR(" / loss ") << Info.LossCount
+				<< LIBISDB_STR(" / output ") << Info.OutputCount
+				<< LIBISDB_STR(" / dropped ") << Info.DroppedCount
+				<< LIBISDB_STR(" / no timestamp ") << Info.NoTimestampCount
+				<< std::endl;
+		}
+
+		if (Stats.HasTimestamp) {
+			Out << LIBISDB_STR("      ")
+				<< ((Stats.MediaType == LibISDB::MPUAssembler::MediaType::Caption) ? LIBISDB_STR("MPU time ") : LIBISDB_STR("DTS "))
+				<< Format90kHzTime(Stats.FirstDTS) << LIBISDB_STR(" - ") << Format90kHzTime(Stats.LastDTS);
+			if (Stats.MediaType != LibISDB::MPUAssembler::MediaType::Caption)
+				Out << LIBISDB_STR(" / interval ") << Stats.MinInterval << LIBISDB_STR("-") << Stats.MaxInterval
+					<< LIBISDB_STR(" / order error ") << Stats.DTSOrderError
+					<< LIBISDB_STR(" / PTS<DTS ") << Stats.PTSBeforeDTS;
+			Out << std::endl;
+		}
+	}
+}
+
+
+template<typename TStream> void PrintCaptions(TStream &Out, const CaptionRecorder &Recorder, std::size_t MaxCount)
+{
+	unsigned long Decoded = 0, Clear = 0;
+	for (const CaptionRecorder::CaptionInfo &Caption : Recorder.CaptionList) {
+		if (Caption.Decoded) {
+			Decoded++;
+			if (Caption.Paragraphs.empty())
+				Clear++;
+		}
+	}
+
+	Out << LIBISDB_STR("Captions : ") << Recorder.CaptionList.size()
+		<< LIBISDB_STR(" documents / decoded ") << Decoded
+		<< LIBISDB_STR(" / clear ") << Clear
+		<< LIBISDB_STR(" / language updates ") << Recorder.LanguageUpdateCount
+		<< LIBISDB_STR(" / language ");
+	for (int i = 2; i >= 0; i--) {
+		const char c = static_cast<char>((Recorder.LanguageCode >> (i * 8)) & 0xFF);
+		Out << (((c >= 0x20) && (c < 0x7F)) ? static_cast<LibISDB::CharType>(c) : LIBISDB_CHAR('?'));
+	}
+	Out << std::endl;
+
+	if (!Recorder.CaptionList.empty()) {
+		const CaptionRecorder::CaptionInfo &First = Recorder.CaptionList.front();
+		if (First.HasSubtitleInfo) {
+			const LibISDB::MHDataComponentDescriptor::AribSubtitleInfo &Info = First.SubtitleInfo;
+			Out << LIBISDB_STR("  subtitle_tag ") << static_cast<int>(Info.SubtitleTag)
+				<< LIBISDB_STR(" / type ") << static_cast<int>(Info.Type)
+				<< LIBISDB_STR(" / OPM ") << static_cast<int>(Info.OPM)
+				<< LIBISDB_STR(" / TMD ") << static_cast<int>(Info.TMD)
+				<< LIBISDB_STR(" / DMF ") << static_cast<int>(Info.DMF)
+				<< LIBISDB_STR(" / resolution ") << static_cast<int>(Info.Resolution)
+				<< LIBISDB_STR(" / compression ") << static_cast<int>(Info.CompressionType);
+			if (Info.TMD == LibISDB::MHDataComponentDescriptor::TMD_REFERENCE_START_TIME)
+				Out << LIBISDB_STR(" / reference_start_time ") << FormatNTPTime(Info.ReferenceStartTime);
+			Out << std::endl;
+		}
+	}
+
+	std::size_t Count = 0;
+	for (const CaptionRecorder::CaptionInfo &Caption : Recorder.CaptionList) {
+		if (Count++ >= MaxCount)
+			break;
+		Out << LIBISDB_STR("  MPU ") << Caption.MPUSequenceNumber << LIBISDB_STR(" ");
+		if (Caption.HasPresentationTime)
+			Out << FormatNTPTime(Caption.PresentationTime);
+		Out << LIBISDB_STR(" (") << Caption.DocumentSize << LIBISDB_STR(" bytes, ")
+			<< Caption.SubsampleCount << LIBISDB_STR(" subsamples)");
+		if (!Caption.Decoded) {
+			Out << LIBISDB_STR(" : decode error") << std::endl;
+		} else if (Caption.Paragraphs.empty()) {
+			Out << LIBISDB_STR(" : (clear)") << std::endl;
+		} else {
+			Out << std::endl;
+			for (const LibISDB::TTMLCaptionDecoder::ParagraphInfo &Paragraph : Caption.Paragraphs) {
+				LibISDB::String Text = Paragraph.Text;
+				for (std::size_t Pos; (Pos = Text.find(LIBISDB_STR(LIBISDB_NEWLINE))) != LibISDB::String::npos;)
+					Text.replace(Pos, LibISDB::StringLength(LIBISDB_STR(LIBISDB_NEWLINE)), LIBISDB_STR(" / "));
+				Out << LIBISDB_STR("    [") << Paragraph.Begin << LIBISDB_STR(" ms ") << Paragraph.Region
+					<< LIBISDB_STR("] ") << Text << std::endl;
+			}
+		}
+	}
+}
+
+
+template<typename TStream> void PrintEPG(TStream &Out, LibISDB::EPGDatabase *pDatabase)
+{
+	LibISDB::EPGDatabase::ServiceList ServiceList;
+	pDatabase->GetServiceList(&ServiceList);
+
+	Out << LIBISDB_STR("EPG : ") << ServiceList.size() << LIBISDB_STR(" services") << std::endl;
+
+	for (const LibISDB::EPGDatabase::ServiceInfo &Service : ServiceList) {
+		LibISDB::EPGDatabase::EventList List;
+		pDatabase->GetEventListSortedByTime(Service.NetworkID, Service.TransportStreamID, Service.ServiceID, &List);
+		std::size_t Extended = 0;
+		for (const LibISDB::EventInfo &Event : List) {
+			if (!Event.ExtendedText.empty())
+				Extended++;
+		}
+
+		Out << LIBISDB_STR("  Service ");
+		PrintHex(Out, Service.ServiceID, 4);
+		Out << LIBISDB_STR(" (network ");
+		PrintHex(Out, Service.NetworkID, 4);
+		Out << LIBISDB_STR(" / TLV stream ");
+		PrintHex(Out, Service.TransportStreamID, 4);
+		Out << LIBISDB_STR(") : ") << List.size() << LIBISDB_STR(" events / extended text ") << Extended
+			<< LIBISDB_STR(" / schedule basic ")
+			<< (pDatabase->IsScheduleComplete(Service.NetworkID, Service.TransportStreamID, Service.ServiceID, false) ?
+				LIBISDB_STR("complete") :
+				pDatabase->HasSchedule(Service.NetworkID, Service.TransportStreamID, Service.ServiceID, false) ?
+				LIBISDB_STR("incomplete") : LIBISDB_STR("none"))
+			<< LIBISDB_STR(" / extended ")
+			<< (pDatabase->IsScheduleComplete(Service.NetworkID, Service.TransportStreamID, Service.ServiceID, true) ?
+				LIBISDB_STR("complete") :
+				pDatabase->HasSchedule(Service.NetworkID, Service.TransportStreamID, Service.ServiceID, true) ?
+				LIBISDB_STR("incomplete") : LIBISDB_STR("none"))
+			<< std::endl;
+
+		if (!List.empty()) {
+			Out << LIBISDB_STR("    First : ");
+			PrintEvent(Out, List.front());
+			Out << LIBISDB_STR("    Last  : ");
+			PrintEvent(Out, List.back());
+		}
+	}
+}
+
+
 }
 
 
@@ -534,6 +965,15 @@ int main(int argc, char **argv)
 	LibISDB::MMTAnalyzerFilter *pAnalyzer = new LibISDB::MMTAnalyzerFilter;
 	AnalyzerEventCounter EventCounter;
 	pAnalyzer->AddEventListener(&EventCounter);
+	MediaStatsFilter *pMediaStats = new MediaStatsFilter;
+	LibISDB::CaptionFilter *pCaption = new LibISDB::CaptionFilter;
+	CaptionRecorder Captions(pCaption);
+	pCaption->SetCaptionHandler(&Captions);
+	pAnalyzer->AddEventListener(&Captions);
+	LibISDB::EPGDatabase *pEPGDatabase = new LibISDB::EPGDatabase;
+	pEPGDatabase->SetNoPastEvents(false);
+	LibISDB::EPGDatabaseFilter *pEPGDatabaseFilter = new LibISDB::EPGDatabaseFilter;
+	pEPGDatabaseFilter->SetEPGDatabase(pEPGDatabase);
 
 #define ASYNC
 #ifdef ASYNC
@@ -552,7 +992,10 @@ int main(int argc, char **argv)
 #endif
 		pParser,
 		pInfo,
-		pAnalyzer
+		pAnalyzer,
+		pMediaStats,
+		pCaption,
+		pEPGDatabaseFilter
 		});
 	Engine.SetStartStreamingOnSourceOpen(true);
 
@@ -569,6 +1012,7 @@ int main(int argc, char **argv)
 	pAsyncStreaming->WaitForEndOfStream();
 #endif
 	Engine.CloseSource();
+	pMediaStats->Finish();
 
 	const LibISDB::StreamFormat Format = pParser->GetStreamFormat();
 	const LibISDB::TSPacketParserFilter::PacketCountInfo TotalCount = pParser->GetTotalPacketCount();
@@ -679,6 +1123,15 @@ int main(int argc, char **argv)
 
 	Out << std::endl;
 	PrintAnalyzerInfo(Out, pAnalyzer, EventCounter);
+
+	Out << std::endl;
+	PrintMediaStats(Out, pMediaStats);
+
+	Out << std::endl;
+	PrintCaptions(Out, Captions, 40);
+
+	Out << std::endl;
+	PrintEPG(Out, pEPGDatabase);
 
 	return 0;
 }

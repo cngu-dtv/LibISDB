@@ -73,6 +73,33 @@ namespace LibISDB
 	constexpr size_t MMT_SICV_SIZE = 16;
 
 	/*
+		fragment_type (ARIB STD-B60 表 6-2)
+	*/
+	constexpr uint8_t MPU_FRAGMENT_TYPE_MPU_METADATA      = 0_u8; // MPU メタデータ (運用されない)
+	constexpr uint8_t MPU_FRAGMENT_TYPE_FRAGMENT_METADATA = 1_u8; // ムービーフラグメントメタデータ (運用されない)
+	constexpr uint8_t MPU_FRAGMENT_TYPE_MFU               = 2_u8; // MFU
+
+	/*
+		fragmentation_indicator (ARIB STD-B60 表 6-3)
+	*/
+	constexpr uint8_t MMT_FRAGMENTATION_INDICATOR_COMPLETE = 0_u8; // 分割されていない
+	constexpr uint8_t MMT_FRAGMENTATION_INDICATOR_FIRST    = 1_u8; // 分割の先頭
+	constexpr uint8_t MMT_FRAGMENTATION_INDICATOR_MIDDLE   = 2_u8; // 分割の途中
+	constexpr uint8_t MMT_FRAGMENTATION_INDICATOR_LAST     = 3_u8; // 分割の最後
+
+	/*
+		字幕・文字スーパーの data_type (ARIB STD-B60 表 9-2)
+	*/
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_TTML      = 0x0_u8; // TTML 文書
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_PNG       = 0x1_u8; // PNG
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_SVG       = 0x2_u8; // SVG
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_PCM       = 0x3_u8; // PCM (AIFF-C)
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_MP3       = 0x4_u8; // MP3
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_AAC       = 0x5_u8; // MPEG-4 AAC
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_SVG_FONT  = 0x6_u8; // SVG フォント
+	constexpr uint8_t MMT_CAPTION_DATA_TYPE_WOFF_FONT = 0x7_u8; // WOFF フォント
+
+	/*
 		packet_id (ARIB STD-B60 表 4-12)
 	*/
 	constexpr uint16_t MMT_PACKET_ID_PA      = 0x0000_u16; // PA メッセージ
@@ -135,6 +162,21 @@ namespace LibISDB
 	constexpr uint32_t MMT_ASSET_TYPE_AAGD = 0x61616764_u32; // 'aagd' 非同期型汎用データ
 
 	constexpr uint16_t MMT_COMPONENT_TAG_INVALID = 0xFFFF_u16;
+
+	/*
+		字幕・文字スーパーの component_tag (ARIB TR-B39 第1部 第3編 8.2.3.1, 9.2.3.1)
+	*/
+	constexpr uint16_t MMT_COMPONENT_TAG_CAPTION_FIRST     = 0x0030_u16; // 字幕 (既定)
+	constexpr uint16_t MMT_COMPONENT_TAG_CAPTION_LAST      = 0x0037_u16;
+	constexpr uint16_t MMT_COMPONENT_TAG_SUPERIMPOSE_FIRST = 0x0038_u16; // 文字スーパー (既定)
+	constexpr uint16_t MMT_COMPONENT_TAG_SUPERIMPOSE_LAST  = 0x003F_u16;
+
+	/*
+		HEVC の nal_unit_type (ITU-T H.265 表 7-1)
+	*/
+	constexpr uint8_t HEVC_NAL_UNIT_TYPE_IRAP_FIRST = 16_u8; // BLA_W_LP
+	constexpr uint8_t HEVC_NAL_UNIT_TYPE_IRAP_LAST  = 23_u8; // RSV_IRAP_VCL23
+	constexpr uint8_t HEVC_NAL_UNIT_TYPE_AUD        = 35_u8; // アクセスユニットデリミタ
 
 } // namespace LibISDB
 

@@ -394,6 +394,9 @@
     <ClInclude Include="..\LibISDB\MMT\MMTPPacket.hpp">
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\MMTPPayload.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\LibISDB\MMT\MMTSignaling.hpp">
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
@@ -404,6 +407,12 @@
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\LibISDB\MMT\MMTTables.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\MPUAssembler.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\TTMLCaption.hpp">
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\LibISDB\TLV\StreamFormatDetector.hpp">
@@ -669,6 +678,9 @@
     <ClCompile Include="..\LibISDB\MMT\MMTPPacket.cpp">
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\LibISDB\MMT\MMTPPayload.cpp">
+      <Filter>MMT\Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\LibISDB\MMT\MMTSignaling.cpp">
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
@@ -679,6 +691,12 @@
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\MMT\MMTTables.cpp">
+      <Filter>MMT\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\MMT\MPUAssembler.cpp">
+      <Filter>MMT\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\MMT\TTMLCaption.cpp">
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\TLV\StreamFormatDetector.cpp">

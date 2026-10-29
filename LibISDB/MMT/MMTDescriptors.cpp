@@ -49,6 +49,51 @@ bool DecodeText(const ARIBString &Src, ReturnArg<String> Dst)
 	return !Dst->empty();
 }
 
+uint64_t Load64(const uint8_t *p)
+{
+	return (static_cast<uint64_t>(Load32(&p[0])) << 32) | Load32(&p[4]);
+}
+
+}
+
+
+
+
+MPUTimestampDescriptor::MPUTimestampDescriptor() noexcept
+{
+	Reset();
+}
+
+
+void MPUTimestampDescriptor::Reset() noexcept
+{
+	MMTDescriptorBase::Reset();
+
+	m_TimestampList.clear();
+}
+
+
+const MPUTimestampDescriptor::TimestampInfo * MPUTimestampDescriptor::GetTimestampInfo(int Index) const
+{
+	if (static_cast<unsigned int>(Index) >= m_TimestampList.size())
+		return nullptr;
+	return &m_TimestampList[Index];
+}
+
+
+bool MPUTimestampDescriptor::StoreContents(const uint8_t *pPayload)
+{
+	if (m_Tag != TAG)
+		return false;
+
+	m_TimestampList.resize(m_Length / 12);
+
+	for (size_t i = 0; i < m_TimestampList.size(); i++) {
+		m_TimestampList[i].MPUSequenceNumber   = Load32(&pPayload[i * 12 + 0]);
+		m_TimestampList[i].MPUPresentationTime = Load64(&pPayload[i * 12 + 4]);
+	}
+
+	return true;
 }
 
 
@@ -559,6 +604,50 @@ bool MHDataComponentDescriptor::StoreContents(const uint8_t *pPayload)
 }
 
 
+bool MHDataComponentDescriptor::GetAribSubtitleInfo(ReturnArg<AribSubtitleInfo> Info) const
+{
+	if (!Info || (m_DataComponentID != DATA_COMPONENT_ID_CAPTION))
+		return false;
+
+	const uint8_t *pData = m_AdditionalDataComponentInfo.GetData();
+	const size_t Size = m_AdditionalDataComponentInfo.GetSize();
+	if (Size < 8)
+		return false;
+
+	AribSubtitleInfo Subtitle = {};
+
+	Subtitle.SubtitleTag                = pData[0];
+	Subtitle.SubtitleInfoVersion        = pData[1] >> 4;
+	Subtitle.StartMPUSequenceNumberFlag = (pData[1] & 0x08) != 0;
+	Subtitle.LanguageCode               = Load24(&pData[2]);
+	Subtitle.Type                       = pData[5] >> 6;
+	Subtitle.SubtitleFormat             = (pData[5] >> 2) & 0x0F;
+	Subtitle.OPM                        = pData[5] & 0x03;
+	Subtitle.TMD                        = pData[6] >> 4;
+	Subtitle.DMF                        = pData[6] & 0x0F;
+	Subtitle.Resolution                 = pData[7] >> 4;
+	Subtitle.CompressionType            = pData[7] & 0x0F;
+
+	size_t Pos = 8;
+	if (Subtitle.StartMPUSequenceNumberFlag) {
+		if (Pos + 4 > Size)
+			return false;
+		Subtitle.StartMPUSequenceNumber = Load32(&pData[Pos]);
+		Pos += 4;
+	}
+	if (Subtitle.TMD == TMD_REFERENCE_START_TIME) {
+		if (Pos + 9 > Size)
+			return false;
+		Subtitle.ReferenceStartTime = Load64(&pData[Pos]);
+		Subtitle.ReferenceStartTimeLeapIndicator = pData[Pos + 8] >> 6;
+	}
+
+	*Info = Subtitle;
+
+	return true;
+}
+
+
 
 
 void MHLocalTimeOffsetDescriptor::Reset() noexcept
@@ -673,6 +762,83 @@ bool MHLogoTransmissionDescriptor::StoreContents(const uint8_t *pPayload)
 	case TRANSMISSION_CHAR:
 		m_LogoChar.assign(&pPayload[1], m_Length - 1);
 		break;
+	}
+
+	return true;
+}
+
+
+
+
+MPUExtendedTimestampDescriptor::MPUExtendedTimestampDescriptor() noexcept
+{
+	Reset();
+}
+
+
+void MPUExtendedTimestampDescriptor::Reset() noexcept
+{
+	MMTDescriptorBase::Reset();
+
+	m_PTSOffsetType = PTS_OFFSET_TYPE_FIXED;
+	m_TimescaleFlag = false;
+	m_Timescale = 0;
+	m_DefaultPTSOffset = 0;
+	m_MPUList.clear();
+}
+
+
+const MPUExtendedTimestampDescriptor::MPUInfo * MPUExtendedTimestampDescriptor::GetMPUInfo(int Index) const
+{
+	if (static_cast<unsigned int>(Index) >= m_MPUList.size())
+		return nullptr;
+	return &m_MPUList[Index];
+}
+
+
+bool MPUExtendedTimestampDescriptor::StoreContents(const uint8_t *pPayload)
+{
+	if (m_Tag != TAG)
+		return false;
+	if (m_Length < 1)
+		return false;
+
+	m_PTSOffsetType = (pPayload[0] >> 1) & 0x03;
+	m_TimescaleFlag = (pPayload[0] & 0x01) != 0;
+
+	size_t Pos = 1;
+	if (m_TimescaleFlag) {
+		if (Pos + 4 > m_Length)
+			return false;
+		m_Timescale = Load32(&pPayload[Pos]);
+		Pos += 4;
+	}
+	if (m_PTSOffsetType == PTS_OFFSET_TYPE_DEFAULT) {
+		if (Pos + 2 > m_Length)
+			return false;
+		m_DefaultPTSOffset = Load16(&pPayload[Pos]);
+		Pos += 2;
+	}
+
+	const size_t AUInfoSize = (m_PTSOffsetType == PTS_OFFSET_TYPE_INDIVIDUAL) ? 4 : 2;
+
+	while (Pos + 8 <= m_Length) {
+		MPUInfo &Info = m_MPUList.emplace_back();
+
+		Info.MPUSequenceNumber                = Load32(&pPayload[Pos]);
+		Info.MPUPresentationTimeLeapIndicator = pPayload[Pos + 4] >> 6;
+		Info.MPUDecodingTimeOffset            = Load16(&pPayload[Pos + 5]);
+		const size_t AUCount                  = pPayload[Pos + 7];
+		Pos += 8;
+		if (Pos + AUCount * AUInfoSize > m_Length)
+			return false;
+
+		Info.AccessUnitList.resize(AUCount);
+		for (AccessUnitInfo &AU : Info.AccessUnitList) {
+			AU.DTSPTSOffset = Load16(&pPayload[Pos]);
+			AU.PTSOffset = (m_PTSOffsetType == PTS_OFFSET_TYPE_INDIVIDUAL) ? Load16(&pPayload[Pos + 2]) : m_DefaultPTSOffset;
+			Pos += AUInfoSize;
+		}
 	}
 
 	return true;

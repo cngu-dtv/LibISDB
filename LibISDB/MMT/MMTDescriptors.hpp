@@ -42,6 +42,31 @@ namespace LibISDB
 
 	// 文字列は UTF-8 のまま保持し、String を返す関数で変換する
 
+	/** MPU タイムスタンプ記述子クラス (ARIB STD-B60 7.4.3.5) */
+	class MPUTimestampDescriptor
+		: public MMTDescriptorTemplate<MPUTimestampDescriptor, 0x0001>
+	{
+	public:
+		struct TimestampInfo {
+			uint32_t MPUSequenceNumber;   /**< mpu_sequence_number */
+			uint64_t MPUPresentationTime; /**< mpu_presentation_time (NTP 64 ビット形式) */
+		};
+
+		MPUTimestampDescriptor() noexcept;
+
+	// MMTDescriptorBase
+		void Reset() noexcept override;
+
+	// MPUTimestampDescriptor
+		int GetTimestampCount() const noexcept { return static_cast<int>(m_TimestampList.size()); }
+		const TimestampInfo * GetTimestampInfo(int Index) const;
+
+	protected:
+		bool StoreContents(const uint8_t *pPayload) override;
+
+		std::vector<TimestampInfo> m_TimestampList;
+	};
+
 	/** アクセス制御記述子クラス (ARIB STD-B60 7.4.3.7) */
 	class MMTAccessControlDescriptor
 		: public MMTDescriptorTemplate<MMTAccessControlDescriptor, 0x8004>
@@ -320,6 +345,40 @@ namespace LibISDB
 		static constexpr uint16_t DATA_COMPONENT_ID_MULTIMEDIA = 0x0021_u16; // マルチメディア
 		static constexpr uint16_t DATA_COMPONENT_ID_INVALID    = 0xFFFF_u16;
 
+		/** 字幕・文字スーパーの付加識別情報 (ARIB STD-B60 表 9-3) */
+		struct AribSubtitleInfo {
+			uint8_t SubtitleTag;                     /**< subtitle_tag */
+			uint8_t SubtitleInfoVersion;             /**< subtitle_info_version */
+			bool StartMPUSequenceNumberFlag;         /**< start_mpu_sequence_number_flag */
+			uint32_t LanguageCode;                   /**< ISO_639_language_code */
+			uint8_t Type;                            /**< type */
+			uint8_t SubtitleFormat;                  /**< subtitle_format */
+			uint8_t OPM;                             /**< OPM */
+			uint8_t TMD;                             /**< TMD */
+			uint8_t DMF;                             /**< DMF */
+			uint8_t Resolution;                      /**< resolution */
+			uint8_t CompressionType;                 /**< compression_type */
+			uint32_t StartMPUSequenceNumber;         /**< start_mpu_sequence_number */
+			uint64_t ReferenceStartTime;             /**< reference_start_time (NTP 64 ビット形式) */
+			uint8_t ReferenceStartTimeLeapIndicator; /**< reference_start_time_leap_indicator */
+		};
+
+		// type (ARIB STD-B60 表 9-4)
+		static constexpr uint8_t SUBTITLE_TYPE_CAPTION     = 0x0_u8; // 字幕
+		static constexpr uint8_t SUBTITLE_TYPE_SUPERIMPOSE = 0x1_u8; // 文字スーパー
+
+		// TMD (ARIB STD-B60 表 9-7)
+		static constexpr uint8_t TMD_UTC                  = 0x0_u8; // TTML 記述 (UTC)
+		static constexpr uint8_t TMD_EIT_START_TIME       = 0x1_u8; // TTML 記述 (MH-EIT の開始時刻起点)
+		static constexpr uint8_t TMD_REFERENCE_START_TIME = 0x2_u8; // TTML 記述 (reference_start_time 起点)
+		static constexpr uint8_t TMD_MPU_TIMESTAMP_BASE   = 0x3_u8; // TTML 記述 (MPU タイムスタンプ起点)
+		static constexpr uint8_t TMD_NPT                  = 0x4_u8; // TTML 記述 (NPT)
+		static constexpr uint8_t TMD_MPU_TIMESTAMP        = 0x8_u8; // MPU タイムスタンプ
+		static constexpr uint8_t TMD_NO_TIME_CONTROL      = 0xF_u8; // 時刻制御なし
+
+		// compression_type (ARIB STD-B60 表 9-10)
+		static constexpr uint8_t COMPRESSION_TYPE_NONE = 0x0_u8; // 非圧縮
+
 		MHDataComponentDescriptor() noexcept;
 
 	// MMTDescriptorBase
@@ -328,6 +387,8 @@ namespace LibISDB
 	// MHDataComponentDescriptor
 		uint16_t GetDataComponentID() const noexcept { return m_DataComponentID; }
 		const DataBuffer * GetAdditionalDataComponentInfo() const noexcept { return &m_AdditionalDataComponentInfo; }
+		// data_component_id が字幕 (0x0020) で付加識別情報が正しい場合のみ true
+		bool GetAribSubtitleInfo(ReturnArg<AribSubtitleInfo> Info) const;
 
 	protected:
 		bool StoreContents(const uint8_t *pPayload) override;
@@ -399,6 +460,51 @@ namespace LibISDB
 		uint16_t m_DownloadDataID;      /**< download_data_id */
 		std::vector<LogoInfo> m_LogoList;
 		ARIBString m_LogoChar;          /**< logo_char */
+	};
+
+	/** MPU 拡張タイムスタンプ記述子クラス (ARIB STD-B60 7.4.3.35) */
+	class MPUExtendedTimestampDescriptor
+		: public MMTDescriptorTemplate<MPUExtendedTimestampDescriptor, 0x8026>
+	{
+	public:
+		// pts_offset_type
+		static constexpr uint8_t PTS_OFFSET_TYPE_FIXED      = 0_u8; // 規定の固定値
+		static constexpr uint8_t PTS_OFFSET_TYPE_DEFAULT    = 1_u8; // default_pts_offset
+		static constexpr uint8_t PTS_OFFSET_TYPE_INDIVIDUAL = 2_u8; // アクセスユニット毎の pts_offset
+
+		struct AccessUnitInfo {
+			uint16_t DTSPTSOffset; /**< dts_pts_offset */
+			uint16_t PTSOffset;    /**< pts_offset (pts_offset_type 1 では default_pts_offset) */
+		};
+
+		struct MPUInfo {
+			uint32_t MPUSequenceNumber;                 /**< mpu_sequence_number */
+			uint8_t MPUPresentationTimeLeapIndicator;   /**< mpu_presentation_time_leap_indicator */
+			uint16_t MPUDecodingTimeOffset;             /**< mpu_decoding_time_offset */
+			std::vector<AccessUnitInfo> AccessUnitList; /**< 復号順 */
+		};
+
+		MPUExtendedTimestampDescriptor() noexcept;
+
+	// MMTDescriptorBase
+		void Reset() noexcept override;
+
+	// MPUExtendedTimestampDescriptor
+		uint8_t GetPTSOffsetType() const noexcept { return m_PTSOffsetType; }
+		bool GetTimescaleFlag() const noexcept { return m_TimescaleFlag; }
+		uint32_t GetTimescale() const noexcept { return m_Timescale; }
+		uint16_t GetDefaultPTSOffset() const noexcept { return m_DefaultPTSOffset; }
+		int GetMPUCount() const noexcept { return static_cast<int>(m_MPUList.size()); }
+		const MPUInfo * GetMPUInfo(int Index) const;
+
+	protected:
+		bool StoreContents(const uint8_t *pPayload) override;
+
+		uint8_t m_PTSOffsetType;     /**< pts_offset_type */
+		bool m_TimescaleFlag;        /**< timescale_flag */
+		uint32_t m_Timescale;        /**< timescale */
+		uint16_t m_DefaultPTSOffset; /**< default_pts_offset */
+		std::vector<MPUInfo> m_MPUList;
 	};
 
 	/** MH-短形式イベント記述子クラス (ARIB STD-B60 7.4.3.17) */

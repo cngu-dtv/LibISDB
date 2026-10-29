@@ -32,6 +32,9 @@
 #include "../TS/CaptionParser.hpp"
 #include "../TS/PIDMap.hpp"
 #include "../TS/PSITable.hpp"
+#include "../MMT/MMTPacketIDMap.hpp"
+#include "../MMT/MMTTables.hpp"
+#include "../MMT/MPUAssembler.hpp"
 #include <vector>
 
 
@@ -42,18 +45,38 @@ namespace LibISDB
 	class CaptionFilter
 		: public SingleIOFilter
 		, protected CaptionParser::CaptionHandler
+		, protected MPUAssembler::Handler
 	{
 	public:
+		/** ARIB-TTML 字幕 (TLV/MMT) の 1 MPU 分の情報 */
+		struct TTMLCaptionInfo {
+			uint16_t PacketID;
+			uint16_t ComponentTag;
+			bool Superimpose;                                      /**< 文字スーパー */
+			bool HasSubtitleInfo;                                  /**< MH-データ符号化方式記述子の付加識別情報がある */
+			MHDataComponentDescriptor::AribSubtitleInfo SubtitleInfo;
+			uint32_t MPUSequenceNumber;
+			bool HasPresentationTime;
+			uint64_t PresentationTime;                             /**< MPU の提示時刻 (NTP 64 ビット形式) */
+			bool Discontinuity;                                    /**< 直前の MPU との間でデータが欠けた */
+			const uint8_t *pDocument;                              /**< TTML 文書 (UTF-8)。無ければ nullptr */
+			size_t DocumentSize;
+			const std::vector<MPUAssembler::SubsampleInfo> *pSubsampleList; /**< 文書と参照されるリソース */
+		};
+
 		class Handler
 		{
 		public:
 			virtual ~Handler() = default;
 
+			// TLV/MMT では pParser は nullptr
 			virtual void OnLanguageUpdate(CaptionFilter *pFilter, CaptionParser *pParser) {}
 			virtual void OnCaption(
 				CaptionFilter *pFilter, CaptionParser *pParser,
 				uint8_t Language, const CharType *pText,
 				const ARIBStringDecoder::FormatList *pFormatList) {}
+			// データはこの呼び出しの間のみ有効
+			virtual void OnTTMLCaption(CaptionFilter *pFilter, const TTMLCaptionInfo &Info) {}
 		};
 
 		typedef CaptionParser::DRCSMap DRCSMap;
@@ -90,10 +113,33 @@ namespace LibISDB
 			CaptionParser *pParser, uint8_t Language, const CharType *pText,
 			const ARIBStringDecoder::FormatList *pFormatList) override;
 
+	// MPUAssembler::Handler
+		void OnCaptionUnit(const MPUAssembler *pAssembler, const MPUAssembler::CaptionUnitInfo &Info) override;
+
 		int GetServiceIndexByID(uint16_t ServiceID) const;
 		CaptionParser * GetCurrentCaptionParser() const;
 		void OnPATSection(const PSITableBase *pTable, const PSISection *pSection);
 		void OnPMTSection(const PSITableBase *pTable, const PSISection *pSection);
+
+		struct MMTCaptionAssetInfo {
+			uint16_t PacketID;
+			uint16_t ComponentTag;
+			bool HasSubtitleInfo;
+			MHDataComponentDescriptor::AribSubtitleInfo SubtitleInfo;
+		};
+
+		struct MMTServiceInfo {
+			uint16_t ServiceID;
+			uint16_t MPTPacketID;
+			std::vector<MMTCaptionAssetInfo> CaptionAssetList; /**< component_tag 順 */
+		};
+
+		int GetMMTServiceIndexByID(uint16_t ServiceID) const;
+		const MMTCaptionAssetInfo * GetMMTTargetAsset() const;
+		void SelectMMTTargetAsset();
+		void CheckMMTLanguageUpdate();
+		void OnPLTTable(const MMTSingleTable *pTable);
+		void OnMPTTable(const MMTSingleTable *pTable);
 
 		struct CaptionESInfo {
 			uint16_t PID;
@@ -116,6 +162,12 @@ namespace LibISDB
 		uint16_t m_TargetESPID;
 		Handler *m_pCaptionHandler;
 		DRCSMap *m_pDRCSMap;
+
+		MMTPacketIDMapManager m_MMTPacketIDMapManager;
+		std::vector<MMTServiceInfo> m_MMTServiceList;
+		uint16_t m_TargetPacketID;
+		uint16_t m_NotifiedPacketID;
+		uint32_t m_NotifiedLanguageCode;
 	};
 
 } // namespace LibISDB

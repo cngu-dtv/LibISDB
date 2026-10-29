@@ -68,6 +68,43 @@ uint8_t GetVideoComponentType(const VideoComponentDescriptor *pDesc)
 	return Type | AspectRatio;
 }
 
+
+void SetContentNibble(const MHContentDescriptor *pContentDesc, EventInfo *pEvent)
+{
+	const int NibbleCount = std::min(pContentDesc->GetNibbleCount(), static_cast<int>(std::size(pEvent->ContentNibble.NibbleList)));
+	pEvent->ContentNibble.NibbleCount = NibbleCount;
+	for (int i = 0; i < NibbleCount; i++)
+		pContentDesc->GetNibble(i, &pEvent->ContentNibble.NibbleList[i]);
+}
+
+
+// 既存のグループの後に追加する
+void AddEventGroupList(const MMTDescriptorBlock *pDescBlock, EventInfo *pEvent)
+{
+	pDescBlock->EnumDescriptors<MHEventGroupDescriptor>(
+		[&](const MHEventGroupDescriptor *pGroupDesc) {
+			EventInfo::EventGroupInfo GroupInfo;
+			GroupInfo.GroupType = pGroupDesc->GetGroupType();
+			const int EventCount = pGroupDesc->GetEventCount();
+			GroupInfo.EventList.resize(EventCount);
+			for (int i = 0; i < EventCount; i++)
+				pGroupDesc->GetEventInfo(i, &GroupInfo.EventList[i]);
+
+			if (std::ranges::find(pEvent->EventGroupList, GroupInfo) != pEvent->EventGroupList.end())
+				return;
+
+			if ((GroupInfo.GroupType == EventGroupDescriptor::GROUP_TYPE_COMMON)
+					&& (EventCount == 1)
+					&& (GroupInfo.EventList.front().ServiceID != pEvent->ServiceID)) {
+				pEvent->IsCommonEvent = true;
+				pEvent->CommonEvent.ServiceID = GroupInfo.EventList.front().ServiceID;
+				pEvent->CommonEvent.EventID = GroupInfo.EventList.front().EventID;
+			}
+
+			pEvent->EventGroupList.push_back(std::move(GroupInfo));
+		});
+}
+
 }
 
 
@@ -106,35 +143,10 @@ bool GetMHEventInfo(const MHEITTable *pTable, int Index, ReturnArg<EventInfo> In
 	GetMHEventAudioList(pDescBlock, &Info->AudioList);
 
 	if (const MHContentDescriptor *pContentDesc = pDescBlock->GetDescriptor<MHContentDescriptor>();
-			pContentDesc != nullptr) {
-		const int NibbleCount = std::min(pContentDesc->GetNibbleCount(), static_cast<int>(std::size(Info->ContentNibble.NibbleList)));
-		Info->ContentNibble.NibbleCount = NibbleCount;
-		for (int i = 0; i < NibbleCount; i++)
-			pContentDesc->GetNibble(i, &Info->ContentNibble.NibbleList[i]);
-	}
+			pContentDesc != nullptr)
+		SetContentNibble(pContentDesc, &*Info);
 
-	pDescBlock->EnumDescriptors<MHEventGroupDescriptor>(
-		[&](const MHEventGroupDescriptor *pGroupDesc) {
-			EventInfo::EventGroupInfo GroupInfo;
-			GroupInfo.GroupType = pGroupDesc->GetGroupType();
-			const int EventCount = pGroupDesc->GetEventCount();
-			GroupInfo.EventList.resize(EventCount);
-			for (int i = 0; i < EventCount; i++)
-				pGroupDesc->GetEventInfo(i, &GroupInfo.EventList[i]);
-
-			if (std::ranges::find(Info->EventGroupList, GroupInfo) != Info->EventGroupList.end())
-				return;
-
-			if ((GroupInfo.GroupType == EventGroupDescriptor::GROUP_TYPE_COMMON)
-					&& (EventCount == 1)
-					&& (GroupInfo.EventList.front().ServiceID != Info->ServiceID)) {
-				Info->IsCommonEvent = true;
-				Info->CommonEvent.ServiceID = GroupInfo.EventList.front().ServiceID;
-				Info->CommonEvent.EventID = GroupInfo.EventList.front().EventID;
-			}
-
-			Info->EventGroupList.push_back(std::move(GroupInfo));
-		});
+	AddEventGroupList(pDescBlock, &*Info);
 
 	Info->Type = EventInfo::TypeFlag::Basic | EventInfo::TypeFlag::Extended;
 	if (pTable->GetTableID() == MMT_TABLE_ID_MH_EIT_PF) {
@@ -270,6 +282,111 @@ uint8_t MMTComponentTagToComponentTag(uint16_t ComponentTag) noexcept
 	if (ComponentTag > 0xFF)
 		return COMPONENT_TAG_INVALID;
 	return static_cast<uint8_t>(ComponentTag);
+}
+
+
+uint8_t MHEITTableIDToEITTableID(uint8_t TableID) noexcept
+{
+	if (TableID == MMT_TABLE_ID_MH_EIT_PF)
+		return EITTable::TABLE_ID_PF_ACTUAL;
+	if ((TableID >= MMT_TABLE_ID_MH_EIT_SCHEDULE_FIRST) && (TableID <= MMT_TABLE_ID_MH_EIT_SCHEDULE_LAST))
+		return static_cast<uint8_t>(0x50 + (TableID - MMT_TABLE_ID_MH_EIT_SCHEDULE_FIRST));
+	return 0;
+}
+
+
+bool GetMHEITSectionInfo(const MHEITTable *pTable, ReturnArg<EPGDatabase::EventSectionInfo> Info)
+{
+	if ((pTable == nullptr) || !Info)
+		return false;
+
+	const uint8_t TableID = MHEITTableIDToEITTableID(pTable->GetTableID());
+	if (TableID == 0)
+		return false;
+
+	Info->TableID                  = TableID;
+	Info->VersionNumber            = pTable->GetVersionNumber();
+	Info->SectionNumber            = pTable->GetSectionNumber();
+	Info->SegmentLastSectionNumber = pTable->GetSegmentLastSectionNumber();
+	Info->LastTableID              = MHEITTableIDToEITTableID(pTable->GetLastTableID());
+	Info->NetworkID                = pTable->GetOriginalNetworkID();
+	Info->TransportStreamID        = pTable->GetTLVStreamID();
+	Info->ServiceID                = pTable->GetServiceID();
+
+	return true;
+}
+
+
+
+
+MHEITEventSectionSource::MHEITEventSectionSource(const MHEITTable *pTable) noexcept
+	: m_pTable(pTable)
+{
+}
+
+
+int MHEITEventSectionSource::GetEventCount() const
+{
+	return m_pTable->GetEventCount();
+}
+
+
+bool MHEITEventSectionSource::GetEventBasicInfo(int Index, ReturnArg<EventBasicInfo> Info) const
+{
+	const MHEITTable::EventInfo *pEventInfo = m_pTable->GetEventInfo(Index);
+	if ((pEventInfo == nullptr) || !Info)
+		return false;
+
+	Info->EventID       = pEventInfo->EventID;
+	Info->StartTime     = pEventInfo->StartTime;
+	Info->Duration      = pEventInfo->Duration;
+	Info->RunningStatus = pEventInfo->RunningStatus;
+	Info->FreeCAMode    = pEventInfo->FreeCAMode;
+
+	return true;
+}
+
+
+bool MHEITEventSectionSource::ApplyDescriptors(
+	int Index, EventInfo *pEvent,
+	ARIBStringDecoder &StringDecoder, ARIBStringDecoder::DecodeFlag DecodeFlags) const
+{
+	// 文字列は UTF-8 なので StringDecoder は使わない
+	const MMTDescriptorBlock *pDescBlock = m_pTable->GetItemDescriptorBlock(Index);
+	if (pDescBlock == nullptr)
+		return false;
+
+	String Str;
+
+	if (const MHShortEventDescriptor *pShortEvent = pDescBlock->GetDescriptor<MHShortEventDescriptor>();
+			pShortEvent != nullptr) {
+		if (pShortEvent->GetEventName(&Str))
+			pEvent->EventName = Str;
+		if (pShortEvent->GetEventDescription(&Str))
+			pEvent->EventText = Str;
+	}
+
+	EventInfo::ExtendedTextInfoList ExtendedText;
+	const bool HasExtended = GetMHEventExtendedTextList(pDescBlock, &ExtendedText);
+	if (HasExtended)
+		pEvent->ExtendedText = std::move(ExtendedText);
+
+	if (pDescBlock->GetDescriptorByTag(VideoComponentDescriptor::TAG) != nullptr)
+		GetMHEventVideoList(pDescBlock, &pEvent->VideoList);
+
+	if (pDescBlock->GetDescriptorByTag(MHAudioComponentDescriptor::TAG) != nullptr)
+		GetMHEventAudioList(pDescBlock, &pEvent->AudioList);
+
+	if (const MHContentDescriptor *pContentDesc = pDescBlock->GetDescriptor<MHContentDescriptor>();
+			pContentDesc != nullptr)
+		SetContentNibble(pContentDesc, pEvent);
+
+	if (pDescBlock->GetDescriptorByTag(MHEventGroupDescriptor::TAG) != nullptr) {
+		pEvent->EventGroupList.clear();
+		AddEventGroupList(pDescBlock, pEvent);
+	}
+
+	return HasExtended;
 }
 
 

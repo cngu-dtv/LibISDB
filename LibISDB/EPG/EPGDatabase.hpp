@@ -116,6 +116,41 @@ namespace LibISDB
 
 		typedef std::set<TimeEventInfo> TimeEventMap;
 
+		/** UpdateEvents() に渡すセクションの情報 (table_id と last_table_id は EIT の値) */
+		struct EventSectionInfo {
+			uint8_t TableID;
+			uint8_t VersionNumber;
+			uint8_t SectionNumber;
+			uint8_t SegmentLastSectionNumber;
+			uint8_t LastTableID;
+			uint16_t NetworkID;
+			uint16_t TransportStreamID;
+			uint16_t ServiceID;
+		};
+
+		/** UpdateEvents() に渡すセクションのイベントの取得元 */
+		class EventSectionSource
+		{
+		public:
+			struct EventBasicInfo {
+				uint16_t EventID;
+				DateTime StartTime;
+				uint32_t Duration;
+				uint8_t RunningStatus;
+				bool FreeCAMode;
+			};
+
+			virtual ~EventSectionSource() = default;
+
+			virtual int GetEventCount() const = 0;
+			virtual bool GetEventBasicInfo(int Index, ReturnArg<EventBasicInfo> Info) const = 0;
+			// 記述子の内容を反映する。記述子が無い項目は変更しない
+			// 拡張形式イベントの記述子があった場合は true
+			virtual bool ApplyDescriptors(
+				int Index, EventInfo *pEvent,
+				ARIBStringDecoder &StringDecoder, ARIBStringDecoder::DecodeFlag DecodeFlags) const = 0;
+		};
+
 		enum class MergeFlag : unsigned int {
 			None               = 0x0000U,
 			DiscardOldEvents   = 0x0001U,
@@ -198,7 +233,11 @@ namespace LibISDB
 		bool UpdateSection(
 			const EITPfScheduleTable *pScheduleTable, const EITTable *pEITTable,
 			EventInfo::SourceIDType SourceID = 0);
+		bool UpdateEvents(
+			const EventSectionInfo &Section, const EventSectionSource &Source,
+			EventInfo::SourceIDType SourceID = 0);
 		bool UpdateTOT(const TOTTable *pTOTTable);
+		bool UpdateTOTTime(const DateTime &Time);
 		void ResetTOTTime();
 
 		MutexLock & GetLock() noexcept { return m_Lock; }
@@ -211,7 +250,7 @@ namespace LibISDB
 			bool IsComplete(int Hour, bool Extended) const;
 			bool IsTableComplete(int TableIndex, int Hour, bool Extended) const;
 			bool HasSchedule(bool Extended) const;
-			bool OnSection(const EITTable *pTable, int Hour);
+			bool OnSection(const EventSectionInfo &Section, int Hour);
 
 		private:
 			struct SegmentInfo {

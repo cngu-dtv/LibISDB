@@ -28,6 +28,7 @@
 #include "EPGDatabaseFilter.hpp"
 #include <algorithm>
 #include "../TS/Tables.hpp"
+#include "../MMT/MHEventInfo.hpp"
 #include "../Base/DebugDef.hpp"
 
 
@@ -58,6 +59,18 @@ void EPGDatabaseFilter::Reset()
 	// TOT
 	m_PIDMapManager.MapTarget(PID_TOT, PSITableBase::CreateWithHandler<TOTTable>(&EPGDatabaseFilter::OnTOTSection, this));
 
+	m_MMTPacketIDMapManager.UnmapAllTargets();
+
+	// MH-EIT
+	m_MMTPacketIDMapManager.MapTarget(
+		MMT_PACKET_ID_MH_EIT,
+		MMTSectionTable::CreateWithHandler<MHEITPfScheduleTable>(&EPGDatabaseFilter::OnMHEITSection, this));
+
+	// MH-TOT
+	m_MMTPacketIDMapManager.MapTarget(
+		MMT_PACKET_ID_MH_TOT,
+		MMTSectionTable::CreateWithHandler<MHTOTTable>(&EPGDatabaseFilter::OnMHTOTSection, this));
+
 	if (m_pEPGDatabase != nullptr)
 		m_pEPGDatabase->ResetTOTTime();
 }
@@ -67,6 +80,8 @@ bool EPGDatabaseFilter::ProcessData(DataStream *pData)
 {
 	if (pData->Is<TSPacket>())
 		m_PIDMapManager.StorePacketStream(pData);
+	else if (pData->Is<TLVPacket>())
+		m_MMTPacketIDMapManager.StorePacketStream(pData);
 
 	return true;
 }
@@ -154,6 +169,47 @@ void EPGDatabaseFilter::OnTOTSection(const PSITableBase *pTable, const PSISectio
 		if (pTOTTable != nullptr)
 			m_pEPGDatabase->UpdateTOT(pTOTTable);
 	}
+}
+
+
+void EPGDatabaseFilter::OnMHEITSection(const PSITableBase *pTable, const PSISection *pSection)
+{
+	if (m_pEPGDatabase == nullptr)
+		return;
+
+	const MHEITPfScheduleTable *pScheduleTable = dynamic_cast<const MHEITPfScheduleTable *>(pTable);
+	if (pScheduleTable == nullptr)
+		return;
+
+	const MHEITTable *pEITTable = pScheduleTable->GetLastUpdatedEITTable();
+	EPGDatabase::EventSectionInfo Section;
+	if (!GetMHEITSectionInfo(pEITTable, &Section))
+		return;
+
+	m_ResetTable = false;
+
+	m_pEPGDatabase->UpdateEvents(Section, MHEITEventSectionSource(pEITTable), m_SourceID);
+
+	if (m_ResetTable) {
+		MMTSectionTable *pSectionTable = m_MMTPacketIDMapManager.GetMapTarget<MMTSectionTable>(MMT_PACKET_ID_MH_EIT);
+		if (pSectionTable != nullptr) {
+			MHEITPfScheduleTable *pMHEITTable = dynamic_cast<MHEITPfScheduleTable *>(pSectionTable->GetTable());
+			if (pMHEITTable != nullptr)
+				pMHEITTable->ResetScheduleService(Section.NetworkID, Section.TransportStreamID, Section.ServiceID);
+		}
+	}
+}
+
+
+void EPGDatabaseFilter::OnMHTOTSection(const PSITableBase *pTable, const PSISection *pSection)
+{
+	if (m_pEPGDatabase == nullptr)
+		return;
+
+	const MHTOTTable *pTOTTable = dynamic_cast<const MHTOTTable *>(pTable);
+	DateTime Time;
+	if ((pTOTTable != nullptr) && pTOTTable->GetDateTime(&Time))
+		m_pEPGDatabase->UpdateTOTTime(Time);
 }
 
 

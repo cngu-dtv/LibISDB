@@ -87,10 +87,13 @@
     <ClInclude Include="..\LibISDB\MMT\MMTGeneralLocationInfo.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTPacketIDMap.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTPPacket.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\MMTPPayload.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTSignaling.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTString.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTTableBase.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTTables.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\MPUAssembler.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\TTMLCaption.hpp" />
     <ClInclude Include="..\LibISDB\TLV\StreamFormatDetector.hpp" />
     <ClInclude Include="..\LibISDB\TLV\TLVConsts.hpp" />
     <ClInclude Include="..\LibISDB\TLV\TLVPacket.hpp" />
@@ -221,10 +224,13 @@
     <ClCompile Include="..\LibISDB\MMT\MMTGeneralLocationInfo.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTPacketIDMap.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTPPacket.cpp" />
+    <ClCompile Include="..\LibISDB\MMT\MMTPPayload.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTSignaling.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTString.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTTableBase.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTTables.cpp" />
+    <ClCompile Include="..\LibISDB\MMT\MPUAssembler.cpp" />
+    <ClCompile Include="..\LibISDB\MMT\TTMLCaption.cpp" />
     <ClCompile Include="..\LibISDB\TLV\StreamFormatDetector.cpp" />
     <ClCompile Include="..\LibISDB\TLV\TLVPacket.cpp" />
     <ClCompile Include="..\LibISDB\TLV\TLVPacketParser.cpp" />

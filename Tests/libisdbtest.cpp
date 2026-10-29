@@ -2028,6 +2028,866 @@ TEST_CASE("MMTAnalyzerFilter", "[mmt][filter]")
 }
 
 
+#include "../LibISDB/MMT/MMTPPayload.hpp"
+#include "../LibISDB/MMT/MPUAssembler.hpp"
+#include "../LibISDB/MMT/TTMLCaption.hpp"
+#include "../LibISDB/Filters/CaptionFilter.hpp"
+#include "../LibISDB/Filters/EPGDatabaseFilter.hpp"
+#include <cstring>
+
+namespace
+{
+	struct DataUnit {
+		ByteArray Data;
+		std::uint32_t ItemID = 0;
+	};
+
+	// MPU ペイロード (ARIB STD-B60 表 6-1)
+	ByteArray MakeMPUPayload(
+		std::uint8_t FragmentationIndicator, std::uint32_t MPUSequenceNumber,
+		const std::vector<ByteArray> &Units, bool Timed = true)
+	{
+		const bool Aggregation = Units.size() > 1;
+		ByteArray Body;
+		Body.push_back(static_cast<std::uint8_t>(
+			(LibISDB::MPU_FRAGMENT_TYPE_MFU << 4) | (Timed ? 0x08 : 0x00) | (FragmentationIndicator << 1) | (Aggregation ? 0x01 : 0x00)));
+		Body.push_back(0x00);
+		Append32(Body, MPUSequenceNumber);
+		const ByteArray DUHeader(Timed ? LibISDB::MFU_TIMED_HEADER_SIZE : LibISDB::MFU_NON_TIMED_HEADER_SIZE, 0x00);
+		for (const ByteArray &Unit : Units) {
+			if (Aggregation)
+				Append16(Body, static_cast<std::uint16_t>(DUHeader.size() + Unit.size()));
+			Append(Body, DUHeader);
+			Append(Body, Unit);
+		}
+		ByteArray Payload;
+		Append16(Payload, static_cast<std::uint16_t>(Body.size()));
+		Append(Payload, Body);
+		return Payload;
+	}
+
+	// ScramblingControl が負の場合はヘッダ拡張を付けない
+	ByteArray MakeMPUTLV(
+		std::uint16_t PacketID, std::uint32_t Sequence, bool RAP, const ByteArray &Payload, int ScramblingControl = 0)
+	{
+		ByteArray MMTP {static_cast<std::uint8_t>((ScramblingControl >= 0 ? 0x02 : 0x00) | (RAP ? 0x01 : 0x00)), 0x00};
+		Append16(MMTP, PacketID);
+		Append32(MMTP, 0x12345678);
+		Append32(MMTP, Sequence);
+		if (ScramblingControl >= 0) {
+			Append16(MMTP, 0x0000); // extension_type
+			Append16(MMTP, 5);
+			Append16(MMTP, 0x8001); // 最後のヘッダ拡張 / hdr_ext_type 0x0001
+			Append16(MMTP, 1);
+			MMTP.push_back(static_cast<std::uint8_t>(0xE0 | (ScramblingControl << 3)));
+		}
+		Append(MMTP, Payload);
+		return MakeTLV(0x03, MakeCompressedIP(0x001, 0, 0x60, 50000, 51216, MMTP));
+	}
+
+	ByteArray MakeNALUnit(std::uint8_t Type, std::uint8_t Fill, size_t Size)
+	{
+		ByteArray NAL {static_cast<std::uint8_t>(Type << 1), 0x01};
+		NAL.resize(Size, Fill);
+		return NAL;
+	}
+
+	// 長さ前置の MFU (ARIB STD-B60 8.1.1)
+	ByteArray MakeNALUnitMFU(const ByteArray &NALUnit)
+	{
+		ByteArray MFU;
+		Append32(MFU, static_cast<std::uint32_t>(NALUnit.size()));
+		Append(MFU, NALUnit);
+		return MFU;
+	}
+
+	ByteArray ToAnnexB(const std::vector<ByteArray> &NALUnits)
+	{
+		ByteArray Data;
+		for (const ByteArray &NAL : NALUnits) {
+			Data.insert(Data.end(), {0x00, 0x00, 0x00, 0x01});
+			Append(Data, NAL);
+		}
+		return Data;
+	}
+
+	ByteArray MakeCaptionMFU(
+		std::uint8_t SubsampleNumber, std::uint8_t LastSubsampleNumber, std::uint8_t DataType,
+		const ByteArray &Data, std::uint8_t SequenceNumber = 0)
+	{
+		ByteArray MFU {0x30, SequenceNumber, SubsampleNumber, LastSubsampleNumber, static_cast<std::uint8_t>(DataType << 4)};
+		Append16(MFU, static_cast<std::uint16_t>(Data.size()));
+		Append(MFU, Data);
+		return MFU;
+	}
+
+	constexpr std::uint32_t TEST_NTP_SECONDS = 0xEE8CD742;
+
+	ByteArray MakeMPUTimestampDescriptor(std::uint32_t MPUSequenceNumber, std::uint64_t Time)
+	{
+		ByteArray Body;
+		Append32(Body, MPUSequenceNumber);
+		Append32(Body, static_cast<std::uint32_t>(Time >> 32));
+		Append32(Body, static_cast<std::uint32_t>(Time));
+		return MakeMMTDescriptor(0x0001, Body);
+	}
+
+	// timescale 90000 / default_pts_offset 1500 / mpu_decoding_time_offset 3000
+	ByteArray MakeMPUExtendedTimestampDescriptor(std::uint32_t MPUSequenceNumber, const std::vector<std::uint16_t> &DTSPTSOffsets)
+	{
+		ByteArray Body {0xFB};
+		Append32(Body, 90000);
+		Append16(Body, 1500);
+		Append32(Body, MPUSequenceNumber);
+		Body.push_back(0x3F);
+		Append16(Body, 3000);
+		Body.push_back(static_cast<std::uint8_t>(DTSPTSOffsets.size()));
+		for (std::uint16_t Offset : DTSPTSOffsets)
+			Append16(Body, Offset);
+		return MakeMMTDescriptor(0x8026, Body);
+	}
+
+	class AssemblerRecorder
+		: public LibISDB::MPUAssembler::Handler
+	{
+	public:
+		struct AccessUnit {
+			std::uint32_t MPUSequenceNumber;
+			std::uint32_t Index;
+			bool HasTimestamp;
+			std::int64_t DTS;
+			std::int64_t PTS;
+			bool RandomAccess;
+			bool Discontinuity;
+			ByteArray Data;
+		};
+
+		struct CaptionUnit {
+			std::uint32_t MPUSequenceNumber;
+			bool HasPresentationTime;
+			std::uint64_t PresentationTime;
+			bool Discontinuity;
+			std::vector<std::pair<std::uint8_t, ByteArray>> Subsamples;
+		};
+
+		std::vector<AccessUnit> AccessUnits;
+		std::vector<CaptionUnit> CaptionUnits;
+
+		void OnAccessUnit(const LibISDB::MPUAssembler *pAssembler, const LibISDB::MPUAssembler::AccessUnitInfo &Info) override
+		{
+			AccessUnits.push_back({
+				Info.MPUSequenceNumber, Info.Index, Info.HasTimestamp, Info.DTS, Info.PTS,
+				Info.RandomAccess, Info.Discontinuity, ByteArray(Info.pData, Info.pData + Info.DataSize)});
+		}
+
+		void OnCaptionUnit(const LibISDB::MPUAssembler *pAssembler, const LibISDB::MPUAssembler::CaptionUnitInfo &Info) override
+		{
+			CaptionUnit &Unit = CaptionUnits.emplace_back();
+			Unit.MPUSequenceNumber = Info.MPUSequenceNumber;
+			Unit.HasPresentationTime = Info.HasPresentationTime;
+			Unit.PresentationTime = Info.PresentationTime;
+			Unit.Discontinuity = Info.Discontinuity;
+			for (const auto &e : Info.SubsampleList)
+				Unit.Subsamples.emplace_back(e.DataType, ByteArray(e.pData, e.pData + e.DataSize));
+		}
+	};
+
+	void StoreMPU(LibISDB::MPUAssembler &Assembler, const ByteArray &Data)
+	{
+		LibISDB::TLVPacket Packet;
+		ToTLVPacket(Data, &Packet);
+		Assembler.StorePacket(&Packet);
+	}
+
+	const Char8 TestTTMLDocument[] =
+		u8"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+		"<tt xml:lang=\"ja\" xmlns=\"http://www.w3.org/ns/ttml\" xmlns:tts=\"http://www.w3.org/ns/ttml#styling\""
+		" xmlns:arib-tt=\"http://www.arib.or.jp/ns/arib-tt\">"
+		"<head><styling><style xml:id=\"s1\" tts:fontSize=\"120px 120px\"/></styling>"
+		"<layout><region xml:id=\"r1\" tts:origin=\"968px 1516px\"/><region xml:id=\"r2\"/></layout></head>"
+		"<body><div begin=\"00:51:55.994\">"
+		"<p xml:id=\"p1\" region=\"r1\"><span style=\"s1\">皮膚の&amp;乾燥</span><br/><span>&#x3042;&#12354;</span></p>"
+		"<!-- comment <p>ignored</p> -->"
+		"<p region=\"r2\" begin=\"1.5s\" end=\"00:00:04.000\">\n  <span xml:id=\"base\">漢字</span>"
+		"<span arib-tt:ruby=\"base\">かんじ</span><span> a  b </span></p>"
+		"<p><span/></p>"
+		"</div></body></tt>";
+}
+
+TEST_CASE("MMTPPayload", "[mmt][mpu]")
+{
+	using namespace LibISDB;
+
+	MPUPayloadHeader Header;
+	std::vector<MFUDataUnit> Units;
+
+	SECTION("Single") {
+		const ByteArray Payload = MakeMPUPayload(1, 0x01020304, {HexBytes("A1A2A3")});
+		REQUIRE(ParseMPUPayload(Payload.data(), Payload.size(), &Header, &Units));
+		CHECK(Header.FragmentType == MPU_FRAGMENT_TYPE_MFU);
+		CHECK(Header.TimedFlag);
+		CHECK(Header.FragmentationIndicator == MMT_FRAGMENTATION_INDICATOR_FIRST);
+		CHECK_FALSE(Header.AggregationFlag);
+		CHECK(Header.MPUSequenceNumber == 0x01020304);
+		REQUIRE(Units.size() == 1);
+		CHECK(ByteArray(Units[0].pData, Units[0].pData + Units[0].Size) == HexBytes("A1A2A3"));
+	}
+
+	SECTION("Aggregated") {
+		ByteArray Payload = MakeMPUPayload(0, 7, {HexBytes("01"), HexBytes("0203"), ByteArray()});
+		// payload_length より後ろは無視する
+		Payload.push_back(0xEE);
+		REQUIRE(ParseMPUPayload(Payload.data(), Payload.size(), &Header, &Units));
+		CHECK(Header.AggregationFlag);
+		REQUIRE(Units.size() == 3);
+		CHECK(Units[1].Size == 2);
+		CHECK(Units[1].pData[1] == 0x03);
+		CHECK(Units[2].Size == 0);
+
+		// data_unit_length が足りない
+		ByteArray Broken = Payload;
+		Broken[MPU_PAYLOAD_HEADER_SIZE + 1] = 0xFF;
+		CHECK_FALSE(ParseMPUPayload(Broken.data(), Broken.size(), &Header, &Units));
+	}
+
+	SECTION("NonTimed") {
+		ByteArray Payload = MakeMPUPayload(0, 1, {HexBytes("0000002AFF")}, false);
+		REQUIRE(ParseMPUPayload(Payload.data(), Payload.size(), &Header, &Units));
+		CHECK_FALSE(Header.TimedFlag);
+		REQUIRE(Units.size() == 1);
+		// item_id の後ろがデータ (MFU_NON_TIMED_HEADER_SIZE の 0 埋めの後ろに置いたもの)
+		CHECK(Units[0].Size == 5);
+	}
+
+	SECTION("Short") {
+		const ByteArray Payload = HexBytes("000420000000");
+		CHECK_FALSE(ParseMPUPayload(Payload.data(), Payload.size(), &Header, &Units));
+	}
+
+	SECTION("CaptionHeader") {
+		CaptionMFUHeader Caption;
+		ByteArray MFU = MakeCaptionMFU(0, 0, MMT_CAPTION_DATA_TYPE_TTML, HexBytes("3C74743E"), 5);
+		REQUIRE(Caption.Parse(MFU.data(), MFU.size()));
+		CHECK(Caption.SubtitleTag == 0x30);
+		CHECK(Caption.SubtitleSequenceNumber == 5);
+		CHECK(Caption.DataSize == 4);
+		CHECK(Caption.HeaderSize == 7);
+		CHECK_FALSE(Caption.Parse(MFU.data(), MFU.size() - 1));
+
+		// 32 ビット長 + サブサンプル情報
+		ByteArray Extended {0x30, 0x01, 0x00, 0x02, 0x0C};
+		Append32(Extended, 2);
+		Extended.insert(Extended.end(), {0x10, 0x00, 0x00, 0x00, 0x09, 0x30, 0x00, 0x00, 0x00, 0x05});
+		Extended.insert(Extended.end(), {0xAA, 0xBB});
+		REQUIRE(Caption.Parse(Extended.data(), Extended.size()));
+		CHECK(Caption.LengthExtensionFlag);
+		CHECK(Caption.SubsampleInfoListFlag);
+		CHECK(Caption.LastSubsampleNumber == 2);
+		CHECK(Caption.HeaderSize == 19);
+		CHECK(Caption.DataSize == 2);
+	}
+}
+
+TEST_CASE("MPUTimestamp", "[mmt][mpu]")
+{
+	using namespace LibISDB;
+
+	const std::uint64_t Time = static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32 | 0x80000000;
+	const std::int64_t Base = static_cast<std::int64_t>(TEST_NTP_SECONDS) * 90000 + 45000;
+	CHECK(MPUTimestampTable::NTPTimeTo90kHz(Time) == Base);
+
+	ByteArray Descriptors = MakeMPUTimestampDescriptor(1005, Time);
+	Append(Descriptors, MakeMPUTimestampDescriptor(1006, Time + (1ULL << 32)));
+	Append(Descriptors, MakeMPUExtendedTimestampDescriptor(1005, {4500, 1500, 1500}));
+
+	MMTDescriptorBlock Block;
+	REQUIRE(Block.ParseBlock(Descriptors.data(), Descriptors.size()) == 3);
+	const MPUTimestampDescriptor *pTimestamp = Block.GetDescriptor<MPUTimestampDescriptor>();
+	REQUIRE(pTimestamp != nullptr);
+	REQUIRE(pTimestamp->GetTimestampCount() == 1);
+	CHECK(pTimestamp->GetTimestampInfo(0)->MPUPresentationTime == Time);
+	const MPUExtendedTimestampDescriptor *pExtended = Block.GetDescriptor<MPUExtendedTimestampDescriptor>();
+	REQUIRE(pExtended != nullptr);
+	CHECK(pExtended->GetPTSOffsetType() == MPUExtendedTimestampDescriptor::PTS_OFFSET_TYPE_DEFAULT);
+	CHECK(pExtended->GetTimescale() == 90000);
+	REQUIRE(pExtended->GetMPUCount() == 1);
+	CHECK(pExtended->GetMPUInfo(0)->MPUDecodingTimeOffset == 3000);
+	REQUIRE(pExtended->GetMPUInfo(0)->AccessUnitList.size() == 3);
+	CHECK(pExtended->GetMPUInfo(0)->AccessUnitList[2].PTSOffset == 1500);
+
+	MPUTimestampTable Table;
+	Table.Update(&Block);
+	CHECK(Table.GetMPUCount() == 2);
+
+	std::int64_t DTS, PTS;
+	// DTS = 提示時刻 - 3000 + 1500 * n、PTS = DTS + dts_pts_offset
+	REQUIRE(Table.GetAccessUnitTime(1005, 0, &DTS, &PTS));
+	CHECK(DTS == Base - 3000);
+	CHECK(PTS == Base + 1500);
+	REQUIRE(Table.GetAccessUnitTime(1005, 2, &DTS, &PTS));
+	CHECK(DTS == Base);
+	CHECK(PTS == Base + 1500);
+	CHECK_FALSE(Table.GetAccessUnitTime(1005, 3, &DTS, &PTS));
+	// MPU 1006 は拡張タイムスタンプが無い
+	CHECK_FALSE(Table.GetAccessUnitTime(1006, 0, &DTS, &PTS));
+	std::uint64_t PresentationTime;
+	REQUIRE(Table.GetPresentationTime(1006, &PresentationTime));
+	CHECK(PresentationTime == Time + (1ULL << 32));
+
+	// MPU_sequence_number が 0 に戻ったら古い MPU は捨てる
+	ByteArray Reset = MakeMPUTimestampDescriptor(0, Time);
+	MMTDescriptorBlock ResetBlock;
+	ResetBlock.ParseBlock(Reset.data(), Reset.size());
+	Table.Update(&ResetBlock);
+	CHECK(Table.GetMPUCount() == 1);
+	CHECK_FALSE(Table.GetPresentationTime(1005, &PresentationTime));
+	CHECK(Table.GetPresentationTime(0, &PresentationTime));
+}
+
+TEST_CASE("MPUAssembler", "[mmt][mpu]")
+{
+	using namespace LibISDB;
+
+	AssemblerRecorder Recorder;
+	const std::uint64_t Time = static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32;
+	const std::int64_t Base = static_cast<std::int64_t>(TEST_NTP_SECONDS) * 90000;
+
+	SECTION("Video") {
+		MPUAssembler Assembler(MPUAssembler::MediaType::Video, &Recorder);
+		ByteArray Descriptors = MakeMPUTimestampDescriptor(10, Time);
+		Append(Descriptors, MakeMPUExtendedTimestampDescriptor(10, {4500, 1500}));
+		MMTDescriptorBlock Block;
+		Block.ParseBlock(Descriptors.data(), Descriptors.size());
+		Assembler.UpdateTimestamps(&Block);
+
+		const ByteArray AUD = MakeNALUnit(35, 0x50, 3);
+		const ByteArray VPS = MakeNALUnit(32, 0x11, 10);
+		const ByteArray SPS = MakeNALUnit(33, 0x12, 20);
+		const ByteArray IDR = MakeNALUnit(19, 0x13, 3000);
+		const ByteArray Trail = MakeNALUnit(1, 0x14, 100);
+		const ByteArray IDRMFU = MakeNALUnitMFU(IDR);
+
+		std::uint32_t Sequence = 1000;
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, true,
+			MakeMPUPayload(0, 10, {MakeNALUnitMFU(AUD), MakeNALUnitMFU(VPS), MakeNALUnitMFU(SPS)})));
+		// スライスは 3 つに分割
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+			MakeMPUPayload(1, 10, {ByteArray(IDRMFU.begin(), IDRMFU.begin() + 1000)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+			MakeMPUPayload(2, 10, {ByteArray(IDRMFU.begin() + 1000, IDRMFU.begin() + 2000)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+			MakeMPUPayload(3, 10, {ByteArray(IDRMFU.begin() + 2000, IDRMFU.end())})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+			MakeMPUPayload(0, 10, {MakeNALUnitMFU(AUD)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+			MakeMPUPayload(0, 10, {MakeNALUnitMFU(Trail)})));
+		REQUIRE(Recorder.AccessUnits.size() == 1);
+
+		SECTION("Normal") {
+			// 次の MPU が始まると前の MPU の最後のアクセスユニットが出力される
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, true,
+				MakeMPUPayload(0, 11, {MakeNALUnitMFU(AUD)})));
+			REQUIRE(Recorder.AccessUnits.size() == 2);
+
+			const AssemblerRecorder::AccessUnit &AU0 = Recorder.AccessUnits[0];
+			CHECK(AU0.MPUSequenceNumber == 10);
+			CHECK(AU0.Index == 0);
+			CHECK(AU0.RandomAccess);
+			CHECK_FALSE(AU0.Discontinuity);
+			CHECK(AU0.Data == ToAnnexB({AUD, VPS, SPS, IDR}));
+			REQUIRE(AU0.HasTimestamp);
+			CHECK(AU0.DTS == Base - 3000);
+			CHECK(AU0.PTS == Base + 1500);
+
+			const AssemblerRecorder::AccessUnit &AU1 = Recorder.AccessUnits[1];
+			CHECK(AU1.Index == 1);
+			CHECK_FALSE(AU1.RandomAccess);
+			CHECK(AU1.Data == ToAnnexB({AUD, Trail}));
+			REQUIRE(AU1.HasTimestamp);
+			CHECK(AU1.DTS == Base - 1500);
+			CHECK(AU1.PTS == Base);
+
+			// MPU 11 の時刻は無い
+			Assembler.Flush();
+			REQUIRE(Recorder.AccessUnits.size() == 3);
+			CHECK_FALSE(Recorder.AccessUnits[2].HasTimestamp);
+			CHECK(Assembler.GetStatistics().OutputCount == 3);
+			CHECK(Assembler.GetStatistics().NoTimestampCount == 1);
+		}
+
+		SECTION("Loss") {
+			// packet_sequence_number が飛ぶと組み立て中のアクセスユニットは捨てる
+			Sequence++;
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+				MakeMPUPayload(0, 10, {MakeNALUnitMFU(AUD)})));
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+				MakeMPUPayload(0, 10, {MakeNALUnitMFU(Trail)})));
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, true,
+				MakeMPUPayload(0, 11, {MakeNALUnitMFU(AUD)})));
+			REQUIRE(Recorder.AccessUnits.size() == 2);
+			// MPU 内の順番が分からなくなるので時刻は付けない
+			CHECK(Recorder.AccessUnits[1].Discontinuity);
+			CHECK_FALSE(Recorder.AccessUnits[1].HasTimestamp);
+			CHECK(Assembler.GetStatistics().LossCount == 1);
+			CHECK(Assembler.GetStatistics().DroppedCount == 1);
+		}
+
+		SECTION("Scrambled") {
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+				MakeMPUPayload(0, 10, {MakeNALUnitMFU(Trail)}), MMT_SCRAMBLING_CONTROL_EVEN));
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, true,
+				MakeMPUPayload(0, 11, {MakeNALUnitMFU(AUD)}), MMT_SCRAMBLING_CONTROL_NONE));
+			CHECK(Recorder.AccessUnits.size() == 1);
+			CHECK(Assembler.GetStatistics().ScrambledCount == 1);
+			CHECK(Assembler.GetStatistics().DroppedCount == 1);
+		}
+
+		SECTION("Reset") {
+			Assembler.Reset();
+			Assembler.Flush();
+			CHECK(Recorder.AccessUnits.size() == 1);
+			CHECK(Assembler.GetTimestampTable().GetMPUCount() == 0);
+		}
+	}
+
+	SECTION("JoinInMiddle") {
+		MPUAssembler Assembler(MPUAssembler::MediaType::Video, &Recorder);
+		ByteArray Descriptors = MakeMPUTimestampDescriptor(10, Time);
+		Append(Descriptors, MakeMPUExtendedTimestampDescriptor(10, {4500, 1500}));
+		MMTDescriptorBlock Block;
+		Block.ParseBlock(Descriptors.data(), Descriptors.size());
+		Assembler.UpdateTimestamps(&Block);
+
+		// RAP_flag の無いパケットから始まった MPU では MPU 内の順番が分からない
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, 1, false, MakeMPUPayload(0, 10, {MakeNALUnitMFU(MakeNALUnit(1, 0, 10))})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, 2, false, MakeMPUPayload(0, 10, {MakeNALUnitMFU(MakeNALUnit(35, 0x50, 3))})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0100, 3, false, MakeMPUPayload(0, 10, {MakeNALUnitMFU(MakeNALUnit(1, 0, 10))})));
+		Assembler.Flush();
+		REQUIRE(Recorder.AccessUnits.size() == 1);
+		CHECK_FALSE(Recorder.AccessUnits[0].HasTimestamp);
+	}
+
+	SECTION("Audio") {
+		MPUAssembler Assembler(MPUAssembler::MediaType::Audio, &Recorder);
+		ByteArray Descriptors = MakeMPUTimestampDescriptor(3, Time);
+		ByteArray Extended {0xFB};
+		Append32(Extended, 48000);
+		Append16(Extended, 1024);
+		Append32(Extended, 3);
+		Extended.insert(Extended.end(), {0x3F, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+		Append(Descriptors, MakeMMTDescriptor(0x8026, Extended));
+		MMTDescriptorBlock Block;
+		Block.ParseBlock(Descriptors.data(), Descriptors.size());
+		Assembler.UpdateTimestamps(&Block);
+
+		const ByteArray Frame = HexBytes("20000A0B0C0D0E0F");
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 50, true, MakeMPUPayload(0, 3, {Frame})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 51, false, MakeMPUPayload(1, 3, {ByteArray(Frame.begin(), Frame.begin() + 3)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 52, false, MakeMPUPayload(3, 3, {ByteArray(Frame.begin() + 3, Frame.end())})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 53, false, MakeMPUPayload(0, 3, {Frame})));
+		REQUIRE(Recorder.AccessUnits.size() == 3);
+		for (int i = 0; i < 3; i++) {
+			const AssemblerRecorder::AccessUnit &AU = Recorder.AccessUnits[i];
+			CHECK(AU.Index == static_cast<std::uint32_t>(i));
+			CHECK(AU.Data == Frame);
+			REQUIRE(AU.HasTimestamp);
+			CHECK(AU.PTS == Base + i * 1920);
+			CHECK(AU.DTS == AU.PTS);
+		}
+	}
+
+	SECTION("Caption") {
+		MPUAssembler Assembler(MPUAssembler::MediaType::Caption, &Recorder);
+		ByteArray Descriptors = MakeMPUTimestampDescriptor(20, Time);
+		MMTDescriptorBlock Block;
+		Block.ParseBlock(Descriptors.data(), Descriptors.size());
+		Assembler.UpdateTimestamps(&Block);
+
+		const ByteArray Document = UTF8(u8"<tt><body><div><p><span>字幕</span></p></div></body></tt>");
+		const ByteArray Image = HexBytes("89504E47");
+		const ByteArray DocumentMFU = MakeCaptionMFU(0, 1, MMT_CAPTION_DATA_TYPE_TTML, Document);
+		StoreMPU(Assembler, MakeMPUTLV(0x0130, 7, true,
+			MakeMPUPayload(1, 20, {ByteArray(DocumentMFU.begin(), DocumentMFU.begin() + 10)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0130, 8, false,
+			MakeMPUPayload(3, 20, {ByteArray(DocumentMFU.begin() + 10, DocumentMFU.end())})));
+		CHECK(Recorder.CaptionUnits.empty());
+		StoreMPU(Assembler, MakeMPUTLV(0x0130, 9, false,
+			MakeMPUPayload(0, 20, {MakeCaptionMFU(1, 1, MMT_CAPTION_DATA_TYPE_PNG, Image)})));
+		REQUIRE(Recorder.CaptionUnits.size() == 1);
+		const AssemblerRecorder::CaptionUnit &Unit = Recorder.CaptionUnits[0];
+		CHECK(Unit.MPUSequenceNumber == 20);
+		CHECK(Unit.HasPresentationTime);
+		CHECK(Unit.PresentationTime == Time);
+		REQUIRE(Unit.Subsamples.size() == 2);
+		CHECK(Unit.Subsamples[0].first == MMT_CAPTION_DATA_TYPE_TTML);
+		CHECK(Unit.Subsamples[0].second == Document);
+		CHECK(Unit.Subsamples[1].first == MMT_CAPTION_DATA_TYPE_PNG);
+		CHECK(Unit.Subsamples[1].second == Image);
+
+		// サブサンプルが欠けた MPU は捨てる
+		StoreMPU(Assembler, MakeMPUTLV(0x0130, 10, true,
+			MakeMPUPayload(0, 21, {MakeCaptionMFU(0, 1, MMT_CAPTION_DATA_TYPE_TTML, Document)})));
+		StoreMPU(Assembler, MakeMPUTLV(0x0130, 11, true,
+			MakeMPUPayload(0, 22, {MakeCaptionMFU(0, 0, MMT_CAPTION_DATA_TYPE_TTML, Document)})));
+		REQUIRE(Recorder.CaptionUnits.size() == 2);
+		CHECK(Recorder.CaptionUnits[1].MPUSequenceNumber == 22);
+		CHECK(Recorder.CaptionUnits[1].Discontinuity);
+		CHECK_FALSE(Recorder.CaptionUnits[1].HasPresentationTime);
+		CHECK(Assembler.GetStatistics().DroppedCount == 1);
+	}
+
+	SECTION("MediaType") {
+		CHECK(MPUAssembler::GetMediaTypeFromAssetType(MMT_ASSET_TYPE_HVC1) == MPUAssembler::MediaType::Video);
+		CHECK(MPUAssembler::GetMediaTypeFromAssetType(MMT_ASSET_TYPE_MP4A) == MPUAssembler::MediaType::Audio);
+		CHECK(MPUAssembler::GetMediaTypeFromAssetType(MMT_ASSET_TYPE_STPP) == MPUAssembler::MediaType::Caption);
+		CHECK(MPUAssembler::GetMediaTypeFromAssetType(MMT_ASSET_TYPE_AAPP) == MPUAssembler::MediaType::Generic);
+	}
+}
+
+TEST_CASE("TTMLCaptionDecoder", "[mmt][caption]")
+{
+	using namespace LibISDB;
+
+	const std::uint8_t *pDocument = reinterpret_cast<const std::uint8_t *>(TestTTMLDocument);
+	const size_t DocumentSize = sizeof(TestTTMLDocument) - 1;
+
+	TTMLCaptionDecoder::ParagraphList List;
+	REQUIRE(TTMLCaptionDecoder::Decode(pDocument, DocumentSize, &List));
+	REQUIRE(List.size() == 2);
+
+	const String Line1 = LIBISDB_STR("皮膚の&乾燥") LIBISDB_STR(LIBISDB_NEWLINE) LIBISDB_STR("ああ");
+	CHECK(List[0].Text == Line1);
+	CHECK(List[0].Region == LIBISDB_STR("r1"));
+	CHECK(List[0].Begin == 3115994);
+	CHECK(List[0].End == TTMLCaptionDecoder::TIME_INVALID);
+
+	// ルビは除き、空白はまとめる
+	const String Line2 = LIBISDB_STR("漢字 a b");
+	CHECK(List[1].Text == Line2);
+	CHECK(List[1].Region == LIBISDB_STR("r2"));
+	CHECK(List[1].Begin == 3115994 + 1500);
+	CHECK(List[1].End == 3115994 + 4000);
+
+	String Text;
+	REQUIRE(TTMLCaptionDecoder::DecodeText(pDocument, DocumentSize, &Text));
+	CHECK(Text == Line1 + LIBISDB_STR(LIBISDB_NEWLINE) + Line2);
+
+	auto Decode = [&List](const char *pText) {
+		return TTMLCaptionDecoder::Decode(reinterpret_cast<const std::uint8_t *>(pText), std::strlen(pText), &List);
+	};
+
+	// 消去 (ARIB STD-B62 第1編 第3部 3.8、ARIB TR-B39 第1部 第3編 8.11.5)
+	CHECK(Decode("<?xml version=\"1.0\"?><tt></tt>"));
+	CHECK(List.empty());
+	CHECK(Decode("<tt><head/><body><div><p><span/></p></div></body></tt>"));
+	CHECK(List.empty());
+
+	CHECK_FALSE(Decode("<tt><p a=\"1></p></tt>"));
+	CHECK_FALSE(Decode("not xml"));
+
+	std::int64_t Time;
+	CHECK(TTMLCaptionDecoder::ParseTime("01:02:03.4", &Time));
+	CHECK(Time == 3723400);
+	CHECK(TTMLCaptionDecoder::ParseTime("00:00:01", &Time));
+	CHECK(Time == 1000);
+	CHECK(TTMLCaptionDecoder::ParseTime("2.25s", &Time));
+	CHECK(Time == 2250);
+	CHECK(TTMLCaptionDecoder::ParseTime("1.5m", &Time));
+	CHECK(Time == 90000);
+	CHECK(TTMLCaptionDecoder::ParseTime("40ms", &Time));
+	CHECK(Time == 40);
+	CHECK_FALSE(TTMLCaptionDecoder::ParseTime("10f", &Time));
+	CHECK_FALSE(TTMLCaptionDecoder::ParseTime("1:2", &Time));
+}
+
+namespace
+{
+	class TTMLCaptionRecorder
+		: public LibISDB::CaptionFilter::Handler
+	{
+	public:
+		int LanguageUpdateCount = 0;
+		std::vector<LibISDB::CaptionFilter::TTMLCaptionInfo> Captions;
+		std::vector<ByteArray> Documents;
+
+		void OnLanguageUpdate(LibISDB::CaptionFilter *pFilter, LibISDB::CaptionParser *pParser) override
+		{
+			CHECK(pParser == nullptr);
+			LanguageUpdateCount++;
+		}
+
+		void OnTTMLCaption(LibISDB::CaptionFilter *pFilter, const LibISDB::CaptionFilter::TTMLCaptionInfo &Info) override
+		{
+			Captions.push_back(Info);
+			Documents.emplace_back(Info.pDocument, Info.pDocument + Info.DocumentSize);
+		}
+	};
+
+	// 字幕付加識別情報 (ARIB STD-B60 表 9-3): jpn / type 0 / OPM 01 / TMD 0010 / DMF 1010 / 3840x2160
+	ByteArray MakeSubtitleInfoDescriptor(std::uint8_t SubtitleTag)
+	{
+		ByteArray Body;
+		Append16(Body, 0x0020);
+		Body.push_back(SubtitleTag);
+		Body.push_back(0x00);
+		Append(Body, UTF8(u8"jpn"));
+		Body.push_back(0x01);
+		Body.push_back(0x2A);
+		Body.push_back(0x10);
+		Append32(Body, TEST_NTP_SECONDS);
+		Append32(Body, 0x00000000);
+		Body.push_back(0x00);
+		return MakeMMTDescriptor(0x8020, Body);
+	}
+}
+
+TEST_CASE("CaptionFilterMMT", "[mmt][caption][filter]")
+{
+	using namespace LibISDB;
+
+	auto pParser = std::make_unique<StreamPacketParserFilter>();
+	auto pCaption = std::make_unique<CaptionFilter>();
+	TTMLCaptionRecorder Recorder;
+	pParser->SetOutputFilter(pCaption.get(), pCaption->GetInputSink());
+	pCaption->SetCaptionHandler(&Recorder);
+	REQUIRE(pParser->StartStreaming());
+
+	std::vector<ByteArray> Packets;
+	std::uint32_t Sequence = 0;
+
+	ByteArray MPT {0xFC, 0x02};
+	Append16(MPT, 0x0400);
+	Append16(MPT, 0x0000);
+	MPT.push_back(3);
+	Append(MPT, MakeAsset(0x0100, MMT_ASSET_TYPE_HEV1, 0x0000));
+	Append(MPT, MakeAsset(0x0138, MMT_ASSET_TYPE_STPP, 0x0038, MakeSubtitleInfoDescriptor(0x38)));
+	Append(MPT, MakeAsset(0x0130, MMT_ASSET_TYPE_STPP, 0x0030,
+		Concat({MakeMPUTimestampDescriptor(40, static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32), MakeSubtitleInfoDescriptor(0x30)})));
+
+	Packets.push_back(MakeMMTPTLV(0x0000, Sequence++, 0x02,
+		MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x80, 1, MakePLTPayload(0x0400, 0x0F00))))));
+	Packets.push_back(MakeMMTPTLV(0x0F00, Sequence++, 0x02,
+		MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x20, 1, MPT)))));
+
+	const ByteArray Document1 = ByteArray(TestTTMLDocument, TestTTMLDocument + sizeof(TestTTMLDocument) - 1);
+	const ByteArray Document2 = UTF8(u8"<tt><body><div><p><span>スーパー</span></p></div></body></tt>");
+	Packets.push_back(MakeMPUTLV(0x0130, 100, true,
+		MakeMPUPayload(0, 40, {MakeCaptionMFU(0, 0, MMT_CAPTION_DATA_TYPE_TTML, Document1)})));
+	Packets.push_back(MakeMPUTLV(0x0138, 200, true,
+		MakeMPUPayload(0, 50, {MakeCaptionMFU(0, 0, MMT_CAPTION_DATA_TYPE_TTML, Document2)})));
+
+	SECTION("Default") {
+		pCaption->SetActiveServiceID(0x0400);
+		InputFilter(*pParser, Concat(Packets), 4096);
+
+		CHECK(Recorder.LanguageUpdateCount == 1);
+		CHECK(pCaption->GetLanguageCount() == 1);
+		CHECK(pCaption->GetLanguageCode(0) == LANGUAGE_CODE_JPN);
+
+		// 既定は component_tag の最も小さい字幕
+		REQUIRE(Recorder.Captions.size() == 1);
+		const CaptionFilter::TTMLCaptionInfo &Info = Recorder.Captions[0];
+		CHECK(Info.PacketID == 0x0130);
+		CHECK(Info.ComponentTag == 0x0030);
+		CHECK_FALSE(Info.Superimpose);
+		REQUIRE(Info.HasSubtitleInfo);
+		CHECK(Info.SubtitleInfo.TMD == MHDataComponentDescriptor::TMD_REFERENCE_START_TIME);
+		CHECK(Info.SubtitleInfo.DMF == 0xA);
+		CHECK(Info.SubtitleInfo.Resolution == 1);
+		CHECK(Info.SubtitleInfo.ReferenceStartTime == static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32);
+		CHECK(Info.MPUSequenceNumber == 40);
+		CHECK(Info.HasPresentationTime);
+		CHECK(Recorder.Documents[0] == Document1);
+	}
+
+	SECTION("Superimpose") {
+		pCaption->SetTargetStream(0x0400, 0x38);
+		InputFilter(*pParser, Concat(Packets), 4096);
+
+		REQUIRE(Recorder.Captions.size() == 1);
+		CHECK(Recorder.Captions[0].PacketID == 0x0138);
+		CHECK(Recorder.Captions[0].Superimpose);
+		CHECK_FALSE(Recorder.Captions[0].HasPresentationTime);
+		CHECK(Recorder.Documents[0] == Document2);
+	}
+
+	SECTION("NoTarget") {
+		InputFilter(*pParser, Concat(Packets), 4096);
+		CHECK(Recorder.Captions.empty());
+		CHECK(Recorder.LanguageUpdateCount == 0);
+		CHECK(pCaption->GetLanguageCount() == 0);
+	}
+
+	SECTION("Reset") {
+		pCaption->SetActiveServiceID(0x0400);
+		InputFilter(*pParser, Concat(Packets), 4096);
+		pCaption->Reset();
+		CHECK(pCaption->GetLanguageCount() == 0);
+		InputFilter(*pParser, Packets[2], 4096);
+		CHECK(Recorder.Captions.size() == 1);
+	}
+}
+
+namespace
+{
+	class EPGEventRecorder
+		: public LibISDB::EPGDatabase::EventListener
+	{
+	public:
+		std::vector<std::string> Events;
+
+		void OnServiceCompleted(
+			LibISDB::EPGDatabase *pEPGDatabase,
+			std::uint16_t NetworkID, std::uint16_t TransportStreamID, std::uint16_t ServiceID,
+			bool IsExtended) override
+		{
+			Events.push_back(IsExtended ? "extended" : "basic");
+		}
+	};
+
+	ByteArray MakeEITScheduleSection(
+		std::uint8_t TableID, std::uint8_t SectionNumber, std::uint8_t LastSectionNumber,
+		std::uint8_t LastTableID, const ByteArray &Events)
+	{
+		ByteArray Payload;
+		Append16(Payload, 0xB110);
+		Append16(Payload, 0x000B);
+		Payload.push_back(SectionNumber);
+		Payload.push_back(LastTableID);
+		Append(Payload, Events);
+		return MakeSection(TableID, 0x0400, 4, SectionNumber, LastSectionNumber, Payload);
+	}
+}
+
+TEST_CASE("EPGDatabaseMMT", "[mmt][epg]")
+{
+	using namespace LibISDB;
+
+	auto pParser = std::make_unique<StreamPacketParserFilter>();
+	auto pEPGFilter = std::make_unique<EPGDatabaseFilter>();
+	EPGDatabase Database;
+	EPGEventRecorder Recorder;
+	Database.SetNoPastEvents(false);
+	Database.AddEventListener(&Recorder);
+	pEPGFilter->SetEPGDatabase(&Database);
+	pParser->SetOutputFilter(pEPGFilter.get(), pEPGFilter->GetInputSink());
+	REQUIRE(pParser->StartStreaming());
+
+	std::vector<ByteArray> Packets;
+	std::uint32_t Sequence = 0;
+	auto Signaling = [&](std::uint16_t PacketID, const ByteArray &Message) {
+		Packets.push_back(MakeMMTPTLV(PacketID, Sequence++, 0x02, MakeSignalingPayload(0, Message)));
+	};
+
+	// 2026/10/29 05:19:16
+	Signaling(0x8005, MakeMessage16(0x8002, MakeShortSection(0xA1, HexBytes("EF9E051916F000"))));
+	Signaling(0x8000, MakeMessage16(0x8000, MakeSection(0x8B, 0x0400, 2, 0, 1, MakeEITPfPayload(0x1234))));
+
+	// schedule basic : 現在時刻のセグメント (1) から 31 まで 1 セクションずつ
+	ByteArray ScheduleEvent;
+	Append16(ScheduleEvent, 0x2000);
+	Append(ScheduleEvent, HexBytes("EF9E070000"));
+	Append(ScheduleEvent, HexBytes("003000"));
+	ByteArray ShortEvent = UTF8(u8"jpn");
+	const ByteArray ScheduleName = UTF8(u8"予定");
+	ShortEvent.push_back(static_cast<std::uint8_t>(ScheduleName.size()));
+	Append(ShortEvent, ScheduleName);
+	Append16(ShortEvent, 0x0000);
+	ByteArray ScheduleDescriptors = MakeMMTDescriptor(0xF001, ShortEvent);
+	Append16(ScheduleEvent, static_cast<std::uint16_t>(ScheduleDescriptors.size()));
+	Append(ScheduleEvent, ScheduleDescriptors);
+	for (std::uint8_t Segment = 1; Segment < 32; Segment++) {
+		Signaling(0x8000, MakeMessage16(0x8000, MakeEITScheduleSection(
+			0x8C, Segment * 8, 31 * 8, 0x8C, (Segment == 2) ? ScheduleEvent : ByteArray())));
+	}
+
+	// schedule extended : 拡張形式イベント記述子だけ
+	ByteArray ExtendedEvent;
+	Append16(ExtendedEvent, 0x2000);
+	Append(ExtendedEvent, HexBytes("EF9E070000"));
+	Append(ExtendedEvent, HexBytes("003000"));
+	ByteArray ExtendedBody {0x00};
+	Append(ExtendedBody, UTF8(u8"jpn"));
+	ByteArray Item {0x06};
+	Append(Item, UTF8(u8"内容"));
+	Append16(Item, 6);
+	Append(Item, UTF8(u8"詳細"));
+	Append16(ExtendedBody, static_cast<std::uint16_t>(Item.size()));
+	Append(ExtendedBody, Item);
+	Append16(ExtendedBody, 0x0000);
+	const ByteArray ExtendedDescriptor = MakeMMTDescriptor(0xF002, ExtendedBody);
+	Append16(ExtendedEvent, static_cast<std::uint16_t>(ExtendedDescriptor.size()));
+	Append(ExtendedEvent, ExtendedDescriptor);
+	Signaling(0x8000, MakeMessage16(0x8000, MakeEITScheduleSection(0x94, 16, 16, 0x94, ExtendedEvent)));
+
+	InputFilter(*pParser, Concat(Packets), 4096);
+
+	EPGDatabase::ServiceList Services;
+	REQUIRE(Database.GetServiceList(&Services));
+	REQUIRE(Services.size() == 1);
+	CHECK(Services[0].NetworkID == 0x000B);
+	CHECK(Services[0].TransportStreamID == 0xB110);
+	CHECK(Services[0].ServiceID == 0x0400);
+
+	CHECK(Database.IsScheduleComplete(0x000B, 0xB110, 0x0400, false));
+	CHECK(Database.HasSchedule(0x000B, 0xB110, 0x0400, true));
+	CHECK(Recorder.Events == std::vector<std::string> {"basic"});
+
+	// p/f のイベントは GetMHEventInfo と同じ内容になる
+	EventInfo Event;
+	REQUIRE(Database.GetEventInfo(0x000B, 0xB110, 0x0400, 0x1234, &Event));
+	std::unique_ptr<MMTSectionTable> pPfTable(new MMTSectionTable(new MHEITPfTable));
+	{
+		TLVPacket Packet;
+		ToTLVPacket(MakeMMTPTLV(0x8000, 0, 0x02,
+			MakeSignalingPayload(0, MakeMessage16(0x8000, MakeSection(0x8B, 0x0400, 2, 0, 1, MakeEITPfPayload(0x1234))))), &Packet);
+		pPfTable->StorePacket(&Packet);
+	}
+	EventInfo Expected;
+	REQUIRE(GetMHEventInfo(pPfTable->GetTable<MHEITPfTable>()->GetPfTable(0x0400), 0, &Expected));
+	CHECK(Event.EventName == Expected.EventName);
+	CHECK(Event.EventText == Expected.EventText);
+	CHECK(Event.ExtendedText == Expected.ExtendedText);
+	CHECK(Event.VideoList == Expected.VideoList);
+	CHECK(Event.AudioList == Expected.AudioList);
+	CHECK(Event.ContentNibble == Expected.ContentNibble);
+	CHECK(Event.EventGroupList == Expected.EventGroupList);
+	CHECK(Event.IsCommonEvent == Expected.IsCommonEvent);
+	CHECK(Event.IsPresent());
+
+	// schedule の基本情報と拡張情報がまとまる
+	REQUIRE(Database.GetEventInfo(0x000B, 0xB110, 0x0400, 0x2000, &Event));
+	CHECK(Event.EventName == LIBISDB_STR("予定"));
+	CHECK(Event.StartTime.Hour == 7);
+	CHECK(Event.StartTime.Minute == 0);
+	CHECK(Event.Duration == 30 * 60);
+	REQUIRE(Event.ExtendedText.size() == 1);
+	CHECK(Event.ExtendedText[0].Description == LIBISDB_STR("内容"));
+	CHECK(Event.ExtendedText[0].Text == LIBISDB_STR("詳細"));
+	CHECK(!!(Event.Type & EventInfo::TypeFlag::Basic));
+	CHECK(!!(Event.Type & EventInfo::TypeFlag::Extended));
+
+	SECTION("TableID") {
+		CHECK(MHEITTableIDToEITTableID(0x8B) == 0x4E);
+		CHECK(MHEITTableIDToEITTableID(0x8C) == 0x50);
+		CHECK(MHEITTableIDToEITTableID(0x94) == 0x58);
+		CHECK(MHEITTableIDToEITTableID(0x9B) == 0x5F);
+		CHECK(MHEITTableIDToEITTableID(0x9C) == 0x00);
+	}
+
+	SECTION("TS") {
+		auto pTSParser = std::make_unique<StreamPacketParserFilter>();
+		auto pTSEPGFilter = std::make_unique<EPGDatabaseFilter>();
+		EPGDatabase TSDatabase;
+		pTSEPGFilter->SetEPGDatabase(&TSDatabase);
+		pTSParser->SetOutputFilter(pTSEPGFilter.get(), pTSEPGFilter->GetInputSink());
+		REQUIRE(pTSParser->StartStreaming());
+		InputFilter(*pTSParser, MakeTSStream(500), 4096);
+		CHECK(TSDatabase.GetServiceCount() == 0);
+	}
+}
+
+
 
 
 #ifdef LIBISDB_TEST_WMAIN

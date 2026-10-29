@@ -56,6 +56,146 @@ unsigned long long GetScheduleTime(unsigned long long CurTime, uint16_t TableID,
 }
 
 
+// EIT のイベント
+class EITEventSectionSource
+	: public EPGDatabase::EventSectionSource
+{
+public:
+	EITEventSectionSource(const EITTable *pTable) noexcept
+		: m_pTable(pTable)
+	{
+	}
+
+	int GetEventCount() const override
+	{
+		return m_pTable->GetEventCount();
+	}
+
+	bool GetEventBasicInfo(int Index, ReturnArg<EventBasicInfo> Info) const override
+	{
+		const EITTable::EventInfo *pEventInfo = m_pTable->GetEventInfo(Index);
+		if ((pEventInfo == nullptr) || !Info)
+			return false;
+
+		Info->EventID       = pEventInfo->EventID;
+		Info->StartTime     = pEventInfo->StartTime;
+		Info->Duration      = pEventInfo->Duration;
+		Info->RunningStatus = pEventInfo->RunningStatus;
+		Info->FreeCAMode    = pEventInfo->FreeCAMode;
+
+		return true;
+	}
+
+	bool ApplyDescriptors(
+		int Index, EventInfo *pEvent,
+		ARIBStringDecoder &StringDecoder, ARIBStringDecoder::DecodeFlag DecodeFlags) const override
+	{
+		const DescriptorBlock *pDescBlock = m_pTable->GetItemDescriptorBlock(Index);
+		if (pDescBlock == nullptr)
+			return false;
+
+		ARIBString StrBuf;
+
+		// 短形式イベント記述子
+		const ShortEventDescriptor *pShortEvent =
+			pDescBlock->GetDescriptor<ShortEventDescriptor>();
+		if (pShortEvent != nullptr) {
+			if (pShortEvent->GetEventName(&StrBuf))
+				StringDecoder.Decode(StrBuf, &pEvent->EventName, DecodeFlags);
+			if (pShortEvent->GetEventDescription(&StrBuf))
+				StringDecoder.Decode(StrBuf, &pEvent->EventText, DecodeFlags);
+		}
+
+		// 拡張形式イベント記述子
+		const bool HasExtended = GetEventExtendedTextList(pDescBlock, StringDecoder, DecodeFlags, &pEvent->ExtendedText);
+
+		// コンポーネント記述子
+		if (pDescBlock->GetDescriptorByTag(ComponentDescriptor::TAG) != nullptr) {
+			pEvent->VideoList.clear();
+			pDescBlock->EnumDescriptors<ComponentDescriptor>(
+				[&](const ComponentDescriptor *pComponentDesc) {
+					EventInfo::VideoInfo &Info = pEvent->VideoList.emplace_back();
+
+					Info.StreamContent = pComponentDesc->GetStreamContent();
+					Info.ComponentType = pComponentDesc->GetComponentType();
+					Info.ComponentTag = pComponentDesc->GetComponentTag();
+					Info.LanguageCode = pComponentDesc->GetLanguageCode();
+					if (pComponentDesc->GetText(&StrBuf))
+						StringDecoder.Decode(StrBuf, &Info.Text, DecodeFlags);
+				});
+		}
+
+		// 音声コンポーネント記述子
+		if (pDescBlock->GetDescriptorByTag(AudioComponentDescriptor::TAG) != nullptr) {
+			pEvent->AudioList.clear();
+			pDescBlock->EnumDescriptors<AudioComponentDescriptor>(
+				[&](const AudioComponentDescriptor *pAudioDesc) {
+					EventInfo::AudioInfo &Info = pEvent->AudioList.emplace_back();
+
+					Info.StreamContent = pAudioDesc->GetStreamContent();
+					Info.ComponentType = pAudioDesc->GetComponentType();
+					Info.ComponentTag = pAudioDesc->GetComponentTag();
+					Info.SimulcastGroupTag = pAudioDesc->GetSimulcastGroupTag();
+					Info.ESMultiLingualFlag = pAudioDesc->GetESMultiLingualFlag();
+					Info.MainComponentFlag = pAudioDesc->GetMainComponentFlag();
+					Info.QualityIndicator = pAudioDesc->GetQualityIndicator();
+					Info.SamplingRate = pAudioDesc->GetSamplingRate();
+					Info.LanguageCode = pAudioDesc->GetLanguageCode();
+					Info.LanguageCode2 = pAudioDesc->GetLanguageCode2();
+					if (pAudioDesc->GetText(&StrBuf))
+						StringDecoder.Decode(StrBuf, &Info.Text);
+				});
+		}
+
+		// コンテント記述子
+		const ContentDescriptor *pContentDesc = pDescBlock->GetDescriptor<ContentDescriptor>();
+		if (pContentDesc != nullptr) {
+			int NibbleCount = pContentDesc->GetNibbleCount();
+			if (NibbleCount > 7)
+				NibbleCount = 7;
+			pEvent->ContentNibble.NibbleCount = NibbleCount;
+			for (int j = 0; j < NibbleCount; j++)
+				pContentDesc->GetNibble(j, &pEvent->ContentNibble.NibbleList[j]);
+		}
+
+		// イベントグループ記述子
+		if (pDescBlock->GetDescriptorByTag(EventGroupDescriptor::TAG) != nullptr) {
+			pEvent->EventGroupList.clear();
+
+			pDescBlock->EnumDescriptors<EventGroupDescriptor>(
+				[&](const EventGroupDescriptor *pGroupDesc) {
+					EventInfo::EventGroupInfo GroupInfo;
+					GroupInfo.GroupType = pGroupDesc->GetGroupType();
+					const int EventCount = pGroupDesc->GetEventCount();
+					GroupInfo.EventList.resize(EventCount);
+					for (int j = 0; j < EventCount; j++)
+						pGroupDesc->GetEventInfo(j, &GroupInfo.EventList[j]);
+
+					auto it = std::ranges::find(pEvent->EventGroupList, GroupInfo);
+					if (it == pEvent->EventGroupList.end()) {
+						pEvent->EventGroupList.push_back(GroupInfo);
+
+						if ((GroupInfo.GroupType == EventGroupDescriptor::GROUP_TYPE_COMMON)
+								&& (EventCount == 1)) {
+							const EventGroupDescriptor::EventInfo &Info = GroupInfo.EventList.front();
+							if (Info.ServiceID != m_pTable->GetServiceID()) {
+								pEvent->IsCommonEvent = true;
+								pEvent->CommonEvent.ServiceID = Info.ServiceID;
+								pEvent->CommonEvent.EventID = Info.EventID;
+							}
+						}
+					}
+				});
+		}
+
+		return HasExtended;
+	}
+
+private:
+	const EITTable *m_pTable;
+};
+
+
 }
 
 
@@ -518,7 +658,26 @@ bool EPGDatabase::UpdateSection(
 	if (LIBISDB_TRACE_ERROR_IF(pEITTable == nullptr))
 		return false;
 
-	const uint16_t TableID = pEITTable->GetTableID();
+	EventSectionInfo Section;
+
+	Section.TableID                  = pEITTable->GetTableID();
+	Section.VersionNumber            = pEITTable->GetVersionNumber();
+	Section.SectionNumber            = pEITTable->GetSectionNumber();
+	Section.SegmentLastSectionNumber = pEITTable->GetSegmentLastSectionNumber();
+	Section.LastTableID              = pEITTable->GetLastTableID();
+	Section.NetworkID                = pEITTable->GetOriginalNetworkID();
+	Section.TransportStreamID        = pEITTable->GetTransportStreamID();
+	Section.ServiceID                = pEITTable->GetServiceID();
+
+	return UpdateEvents(Section, EITEventSectionSource(pEITTable), SourceID);
+}
+
+
+bool EPGDatabase::UpdateEvents(
+	const EventSectionInfo &Section, const EventSectionSource &Source,
+	EventInfo::SourceIDType SourceID)
+{
+	const uint16_t TableID = Section.TableID;
 	if ((TableID < 0x4E) || (TableID > 0x6F))
 		return false;
 
@@ -530,9 +689,9 @@ bool EPGDatabase::UpdateSection(
 		return false;
 
 	const ServiceInfo Key(
-		pEITTable->GetOriginalNetworkID(),
-		pEITTable->GetTransportStreamID(),
-		pEITTable->GetServiceID());
+		Section.NetworkID,
+		Section.TransportStreamID,
+		Section.ServiceID);
 	const auto [itService, ServiceInserted] = m_ServiceMap.emplace(
 		std::piecewise_construct,
 		std::forward_as_tuple(Key),
@@ -549,16 +708,18 @@ bool EPGDatabase::UpdateSection(
 
 	bool IsUpdated = false;
 
-	const int EventCount = pEITTable->GetEventCount();
+	const int EventCount = Source.GetEventCount();
 
 	if (EventCount > 0) {
-		const uint16_t NetworkID = pEITTable->GetOriginalNetworkID();
-		const uint16_t TransportStreamID = pEITTable->GetTransportStreamID();
-		const uint16_t ServiceID = pEITTable->GetServiceID();
-		ARIBString StrBuf;
+		const uint16_t NetworkID = Section.NetworkID;
+		const uint16_t TransportStreamID = Section.TransportStreamID;
+		const uint16_t ServiceID = Section.ServiceID;
 
 		for (int i = 0; i < EventCount; i++) {
-			const EITTable::EventInfo *pEventInfo = pEITTable->GetEventInfo(i);
+			EventSectionSource::EventBasicInfo BasicInfo;
+			if (!Source.GetEventBasicInfo(i, &BasicInfo))
+				continue;
+			const EventSectionSource::EventBasicInfo *pEventInfo = &BasicInfo;
 
 			// 開始/終了時刻が未定義のものは除外する
 			if (!pEventInfo->StartTime.IsValid() || (pEventInfo->Duration == 0))
@@ -694,101 +855,9 @@ bool EPGDatabase::UpdateSection(
 			// extended のみが ServiceEventMap::EventMap に追加されることは無い
 			LIBISDB_ASSERT(!!(pEvent->Type & EventInfo::TypeFlag::Basic) || &EventMap == &pService->EventExtendedMap);
 
-			const DescriptorBlock *pDescBlock = &pEventInfo->Descriptors;
-
-			// 短形式イベント記述子
-			const ShortEventDescriptor *pShortEvent =
-				pDescBlock->GetDescriptor<ShortEventDescriptor>();
-			if (pShortEvent != nullptr) {
-				if (pShortEvent->GetEventName(&StrBuf))
-					m_StringDecoder.Decode(StrBuf, &pEvent->EventName, m_StringDecodeFlags);
-				if (pShortEvent->GetEventDescription(&StrBuf))
-					m_StringDecoder.Decode(StrBuf, &pEvent->EventText, m_StringDecodeFlags);
-			}
-
-			// 拡張形式イベント記述子
-			if (!GetEventExtendedTextList(pDescBlock, m_StringDecoder, m_StringDecodeFlags, &pEvent->ExtendedText)) {
+			if (!Source.ApplyDescriptors(i, pEvent, m_StringDecoder, m_StringDecodeFlags)) {
 				if (!IsExtended)
 					MergeEventExtendedInfo(*pService, pEvent);
-			}
-
-			// コンポーネント記述子
-			if (pDescBlock->GetDescriptorByTag(ComponentDescriptor::TAG) != nullptr) {
-				pEvent->VideoList.clear();
-				pDescBlock->EnumDescriptors<ComponentDescriptor>(
-					[&](const ComponentDescriptor *pComponentDesc) {
-						EventInfo::VideoInfo &Info = pEvent->VideoList.emplace_back();
-
-						Info.StreamContent = pComponentDesc->GetStreamContent();
-						Info.ComponentType = pComponentDesc->GetComponentType();
-						Info.ComponentTag = pComponentDesc->GetComponentTag();
-						Info.LanguageCode = pComponentDesc->GetLanguageCode();
-						if (pComponentDesc->GetText(&StrBuf))
-							m_StringDecoder.Decode(StrBuf, &Info.Text, m_StringDecodeFlags);
-					});
-			}
-
-			// 音声コンポーネント記述子
-			if (pDescBlock->GetDescriptorByTag(AudioComponentDescriptor::TAG) != nullptr) {
-				pEvent->AudioList.clear();
-				pDescBlock->EnumDescriptors<AudioComponentDescriptor>(
-					[&](const AudioComponentDescriptor *pAudioDesc) {
-						EventInfo::AudioInfo &Info = pEvent->AudioList.emplace_back();
-
-						Info.StreamContent = pAudioDesc->GetStreamContent();
-						Info.ComponentType = pAudioDesc->GetComponentType();
-						Info.ComponentTag = pAudioDesc->GetComponentTag();
-						Info.SimulcastGroupTag = pAudioDesc->GetSimulcastGroupTag();
-						Info.ESMultiLingualFlag = pAudioDesc->GetESMultiLingualFlag();
-						Info.MainComponentFlag = pAudioDesc->GetMainComponentFlag();
-						Info.QualityIndicator = pAudioDesc->GetQualityIndicator();
-						Info.SamplingRate = pAudioDesc->GetSamplingRate();
-						Info.LanguageCode = pAudioDesc->GetLanguageCode();
-						Info.LanguageCode2 = pAudioDesc->GetLanguageCode2();
-						if (pAudioDesc->GetText(&StrBuf))
-							m_StringDecoder.Decode(StrBuf, &Info.Text);
-					});
-			}
-
-			// コンテント記述子
-			const ContentDescriptor *pContentDesc = pDescBlock->GetDescriptor<ContentDescriptor>();
-			if (pContentDesc != nullptr) {
-				int NibbleCount = pContentDesc->GetNibbleCount();
-				if (NibbleCount > 7)
-					NibbleCount = 7;
-				pEvent->ContentNibble.NibbleCount = NibbleCount;
-				for (int j = 0; j < NibbleCount; j++)
-					pContentDesc->GetNibble(j, &pEvent->ContentNibble.NibbleList[j]);
-			}
-
-			// イベントグループ記述子
-			if (pDescBlock->GetDescriptorByTag(EventGroupDescriptor::TAG) != nullptr) {
-				pEvent->EventGroupList.clear();
-
-				pDescBlock->EnumDescriptors<EventGroupDescriptor>(
-					[&](const EventGroupDescriptor *pGroupDesc) {
-						EventInfo::EventGroupInfo GroupInfo;
-						GroupInfo.GroupType = pGroupDesc->GetGroupType();
-						const int EventCount = pGroupDesc->GetEventCount();
-						GroupInfo.EventList.resize(EventCount);
-						for (int j = 0; j < EventCount; j++)
-							pGroupDesc->GetEventInfo(j, &GroupInfo.EventList[j]);
-
-						auto it = std::ranges::find(pEvent->EventGroupList, GroupInfo);
-						if (it == pEvent->EventGroupList.end()) {
-							pEvent->EventGroupList.push_back(GroupInfo);
-
-							if ((GroupInfo.GroupType == EventGroupDescriptor::GROUP_TYPE_COMMON)
-									&& (EventCount == 1)) {
-								const EventGroupDescriptor::EventInfo &Info = GroupInfo.EventList.front();
-								if (Info.ServiceID != pEITTable->GetServiceID()) {
-									pEvent->IsCommonEvent = true;
-									pEvent->CommonEvent.ServiceID = Info.ServiceID;
-									pEvent->CommonEvent.EventID = Info.EventID;
-								}
-							}
-						}
-					});
 			}
 
 			if (!IsPending && !IsExtendedOnly) {
@@ -805,7 +874,7 @@ bool EPGDatabase::UpdateSection(
 		if ((m_CurTOTTime.Hour > 0) || (m_CurTOTTime.Minute > 0) || (m_CurTOTTime.Second >= 30)) {
 			if ((TableID >= 0x50 && TableID <= 0x57) || (TableID >= 0x60 && TableID <= 0x67)) {
 				// Schedule basic
-				const unsigned long long Time = GetScheduleTime(m_CurTOTSeconds, TableID, pEITTable->GetSectionNumber());
+				const unsigned long long Time = GetScheduleTime(m_CurTOTSeconds, TableID, Section.SectionNumber);
 				auto it = Service.TimeMap.lower_bound(TimeEventInfo(Time));
 				while (it != Service.TimeMap.end()) {
 					if ((it->StartTime < Time) || (it->StartTime >= Time + (3 * 60 * 60))
@@ -849,7 +918,7 @@ bool EPGDatabase::UpdateSection(
 
 		const bool IsComplete = Service.Schedule.IsComplete(m_CurTOTTime.Hour, IsExtended);
 
-		if (Service.Schedule.OnSection(pEITTable, m_CurTOTTime.Hour)) {
+		if (Service.Schedule.OnSection(Section, m_CurTOTTime.Hour)) {
 			if (m_CurTOTTime.IsValid())
 				Service.ScheduleUpdatedTime = m_CurTOTTime;
 
@@ -887,6 +956,12 @@ bool EPGDatabase::UpdateTOT(const TOTTable *pTOTTable)
 	if (!pTOTTable->GetDateTime(&Time))
 		return false;
 
+	return UpdateTOTTime(Time);
+}
+
+
+bool EPGDatabase::UpdateTOTTime(const DateTime &Time)
+{
 	BlockLock Lock(m_Lock);
 
 	m_CurTOTTime = Time;
@@ -1381,13 +1456,13 @@ bool EPGDatabase::ScheduleInfo::HasSchedule(bool Extended) const
 }
 
 
-bool EPGDatabase::ScheduleInfo::OnSection(const EITTable *pTable, int Hour)
+bool EPGDatabase::ScheduleInfo::OnSection(const EventSectionInfo &Section, int Hour)
 {
-	const uint8_t TableID = pTable->GetTableID();
-	const uint8_t LastTableID = pTable->GetLastTableID();
+	const uint8_t TableID = Section.TableID;
+	const uint8_t LastTableID = Section.LastTableID;
 	const uint8_t FirstTableID = LastTableID & 0xF8;
-	const uint8_t SectionNumber = pTable->GetSectionNumber();
-	const uint8_t LastSectionNumber = pTable->GetSegmentLastSectionNumber();
+	const uint8_t SectionNumber = Section.SectionNumber;
+	const uint8_t LastSectionNumber = Section.SegmentLastSectionNumber;
 	const uint8_t FirstSectionNumber = LastSectionNumber & 0xF8;
 
 	if ((TableID < 0x50) || (TableID > 0x6F)
@@ -1409,9 +1484,9 @@ bool EPGDatabase::ScheduleInfo::OnSection(const EITTable *pTable, int Hour)
 	if (pTableList->TableCount != TableCount) {
 		pTableList->TableCount = TableCount;
 		std::memset(pTableList->Table, 0, sizeof(pTableList->Table));
-		Table.Version = pTable->GetVersionNumber();
-	} else if (pTable->GetVersionNumber() != Table.Version) {
-		Table.Version = pTable->GetVersionNumber();
+		Table.Version = Section.VersionNumber;
+	} else if (Section.VersionNumber != Table.Version) {
+		Table.Version = Section.VersionNumber;
 		Table.IsComplete = false;
 		std::memset(Table.SegmentList, 0, sizeof(Table.SegmentList));
 	}

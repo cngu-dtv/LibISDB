@@ -278,6 +278,17 @@ namespace LibISDB
 		const MHEITTable * GetPfTable(uint16_t ServiceID, bool Following = false) const;
 	};
 
+	/** MH-EIT [p/f schedule] クラス */
+	class MHEITPfScheduleTable
+		: public PSITableSet
+	{
+	public:
+		MHEITPfScheduleTable();
+
+		const MHEITTable * GetLastUpdatedEITTable() const;
+		bool ResetScheduleService(uint16_t NetworkID, uint16_t TLVStreamID, uint16_t ServiceID);
+	};
+
 	/** MH-BIT クラス (ARIB STD-B60 7.3.3.11) */
 	class MHBITTable
 		: public PSISingleTable

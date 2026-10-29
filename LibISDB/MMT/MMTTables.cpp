@@ -699,6 +699,53 @@ const MHEITTable * MHEITPfTable::GetPfTable(uint16_t ServiceID, bool Following) 
 
 
 
+MHEITPfScheduleTable::MHEITPfScheduleTable()
+{
+	MapTable(MMT_TABLE_ID_MH_EIT_PF, new MHEITMultiTable);
+	for (uint8_t TableID = MMT_TABLE_ID_MH_EIT_SCHEDULE_FIRST; TableID <= MMT_TABLE_ID_MH_EIT_SCHEDULE_LAST; TableID++)
+		MapTable(TableID, new MHEITMultiTable);
+}
+
+
+const MHEITTable * MHEITPfScheduleTable::GetLastUpdatedEITTable() const
+{
+	const MHEITMultiTable *pTable = dynamic_cast<const MHEITMultiTable *>(GetLastUpdatedTable());
+	if (pTable == nullptr)
+		return nullptr;
+
+	const int Index = pTable->GetTableIndexByUniqueID(m_LastUpdatedTableUniqueID);
+	if (Index < 0)
+		return nullptr;
+
+	return dynamic_cast<const MHEITTable *>(pTable->GetSection(Index, m_LastUpdatedSectionNumber));
+}
+
+
+bool MHEITPfScheduleTable::ResetScheduleService(
+	uint16_t NetworkID, uint16_t TLVStreamID, uint16_t ServiceID)
+{
+	bool ResetPerformed = false;
+
+	for (auto &Map : m_TableMap) {
+		MHEITMultiTable *pEITMultiTable = dynamic_cast<MHEITMultiTable *>(Map.second.get());
+
+		if (pEITMultiTable != nullptr) {
+			const int Index = pEITMultiTable->GetTableIndexByUniqueID(
+				MHEITMultiTable::MakeTableUniqueID(NetworkID, TLVStreamID, ServiceID));
+
+			if (Index >= 0) {
+				if (pEITMultiTable->ResetTable(Index))
+					ResetPerformed = true;
+			}
+		}
+	}
+
+	return ResetPerformed;
+}
+
+
+
+
 MHBITTable::MHBITTable()
 {
 	Reset();

@@ -32,6 +32,7 @@
 #include "../EPG/EPGDatabase.hpp"
 #include "../TS/PIDMap.hpp"
 #include "../TS/Tables.hpp"
+#include "../MMT/MMTPacketIDMap.hpp"
 #include <memory>
 
 
@@ -63,6 +64,7 @@ namespace LibISDB
 
 	protected:
 		PIDMapManager m_PIDMapManager;
+		MMTPacketIDMapManager m_MMTPacketIDMapManager;
 		EPGDatabase *m_pEPGDatabase;
 		bool m_ResetTable;
 		EventInfo::SourceIDType m_SourceID;
@@ -75,6 +77,8 @@ namespace LibISDB
 
 		void OnEITSection(const PSITableBase *pTable, const PSISection *pSection);
 		void OnTOTSection(const PSITableBase *pTable, const PSISection *pSection);
+		void OnMHEITSection(const PSITableBase *pTable, const PSISection *pSection);
+		void OnMHTOTSection(const PSITableBase *pTable, const PSISection *pSection);
 	};
 
 } // namespace LibISDB
