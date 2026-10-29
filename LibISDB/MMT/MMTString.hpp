@@ -38,8 +38,12 @@ namespace LibISDB
 		TLV-SI / MMT-SI の文字列 (UTF-8、ARIB TR-B39 第1部 第4編 4章) を変換する
 		CR (U+000D) は改行とし、それ以外の制御文字は除く
 	*/
-	bool DecodeMMTString(const uint8_t *pData, size_t Length, ReturnArg<String> Dst);
-	bool DecodeMMTString(const ARIBString &Src, ReturnArg<String> Dst);
+	bool DecodeMMTString(
+		const uint8_t *pData, size_t Length, ReturnArg<String> Dst,
+		ARIBStringDecoder::DecodeFlag Flags = ARIBStringDecoder::DecodeFlag::None);
+	bool DecodeMMTString(
+		const ARIBString &Src, ReturnArg<String> Dst,
+		ARIBStringDecoder::DecodeFlag Flags = ARIBStringDecoder::DecodeFlag::None);
 
 } // namespace LibISDB
 

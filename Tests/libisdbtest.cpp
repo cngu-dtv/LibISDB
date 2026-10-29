@@ -267,6 +267,17 @@ TEST_CASE("ARIBString", "[base][string]")
 	// "番組内容②"
 	decoder.Decode("\x48\x56\x41\x48\x46\x62\x4d\x46\x1b\x24\x2a\x3b\x1b\x7d\xfe\xe2"_b8, 16, &str);
 	CHECK(str.compare(LIBISDB_STR("\u756a\u7d44\u5185\u5bb9\u2461")) == 0);
+
+	// \u8ffd\u52a0\u8a18\u53f7\u306e Unicode \u304b\u3089\u65e2\u5b9a\u306e\u6587\u5b57\u5217\u3078\u306e\u9006\u5f15\u304d
+	typedef LibISDB::ARIBStringDecoder::InternalString InternalString;
+	REQUIRE(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x1F211) != nullptr);
+	CHECK(InternalString(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x1F211)) == LIBISDB_ARIB_STR("[\u5b57]"));
+	REQUIRE(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x1F214) != nullptr);
+	CHECK(InternalString(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x1F214)) == LIBISDB_ARIB_STR("[\u4e8c]"));  // 90 \u533a\u3092\u63a1\u308b
+	REQUIRE(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x322A) != nullptr);
+	CHECK(InternalString(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x322A)) == LIBISDB_ARIB_STR("(\u6708)"));
+	CHECK(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x5E74) == nullptr);   // \u5e74 (\u65e2\u5b9a\u3068\u540c\u3058)
+	CHECK(LibISDB::ARIBStringDecoder::GetSymbolAlternativeText(0x1F19E) == nullptr);  // STD-B24 \u306b\u306a\u3044
 }
 
 
@@ -1201,7 +1212,8 @@ namespace
 	// MJD 61342 = 2026/10/29
 	const ByteArray StartTime = HexBytes("EF9E050000");
 
-	const LibISDB::String EventNameText = LIBISDB_STR("番組🆞");
+	// 🆞 は既定で [4K] になる
+	const LibISDB::String EventNameText = LIBISDB_STR("番組[4K]");
 
 	ByteArray MakeEITEvent(std::uint16_t EventID, const ByteArray &Duration, const ByteArray &Descriptors)
 	{
@@ -1392,11 +1404,20 @@ TEST_CASE("MMTString", "[mmt][string]")
 	CHECK(LibISDB::DecodeMMTString(UTF8(u8"ABC 日本").data(), UTF8(u8"ABC 日本").size(), &Text));
 	CHECK(Text == LIBISDB_STR("ABC 日本"));
 
-	// 補助面の文字
-	const ByteArray Enclosed = UTF8(u8"🆞🈑");
-	const LibISDB::String EnclosedText = LIBISDB_STR("🆞🈑");
+	// 追加記号は既定で ARIBStringDecoder の既定と同じ文字列、UnicodeSymbol で符号位置のまま
+	const ByteArray Enclosed = UTF8(u8"空港🆞🈑🆧ピアノ㈪㋿");
+	const LibISDB::String EnclosedText = LIBISDB_STR("空港[4K][字][HDR]ピアノ(月)㋿");
+	const LibISDB::String EnclosedUnicodeText = LIBISDB_STR("空港🆞🈑🆧ピアノ㈪㋿");
 	CHECK(LibISDB::DecodeMMTString(Enclosed.data(), Enclosed.size(), &Text));
 	CHECK(Text == EnclosedText);
+	CHECK(LibISDB::DecodeMMTString(Enclosed.data(), Enclosed.size(), &Text, LibISDB::ARIBStringDecoder::DecodeFlag::UnicodeSymbol));
+	CHECK(Text == EnclosedUnicodeText);
+
+	// LATIN-1 SUPPLEMENT は変換しない
+	const ByteArray Latin1 = UTF8(u8"m²½");
+	const LibISDB::String Latin1Text = LIBISDB_STR("m²½");
+	CHECK(LibISDB::DecodeMMTString(Latin1.data(), Latin1.size(), &Text));
+	CHECK(Text == Latin1Text);
 
 	// CR は改行、それ以外の制御文字 (LF、タブ、C1) は除く
 	const ByteArray Control = HexBytes("410D0A42094300C28044");

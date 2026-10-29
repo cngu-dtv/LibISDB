@@ -29,6 +29,8 @@
 #include "../LibISDBWindows.hpp"
 #endif
 #include "MMTString.hpp"
+#include <algorithm>
+#include <iterator>
 #include "../Base/DebugDef.hpp"
 
 
@@ -92,13 +94,58 @@ size_t DecodeUTF8Char(const uint8_t *pData, size_t Length, char32_t *pCode)
 }
 
 
-#if defined(LIBISDB_WINDOWS) || defined(LIBISDB_WCHAR)
-typedef std::wstring InternalString;
+typedef ARIBStringDecoder::InternalChar InternalChar;
+typedef ARIBStringDecoder::InternalString InternalString;
+#ifdef LIBISDB_ARIB_STR_IS_WCHAR
 #define INTERNAL_NEWLINE LIBISDB_CAT_SYMBOL(L, LIBISDB_NEWLINE)
 #else
-typedef std::string InternalString;
 #define INTERNAL_NEWLINE LIBISDB_NEWLINE
 #endif
+
+
+struct SymbolText {
+	char32_t Code;
+	const InternalChar *pText;
+};
+
+constexpr SymbolText SymbolTextTable[] = {
+	{0x1F19B, LIBISDB_ARIB_STR("[3D]")},
+	{0x1F19C, LIBISDB_ARIB_STR("[2ndScr]")},
+	{0x1F19D, LIBISDB_ARIB_STR("[2K]")},
+	{0x1F19E, LIBISDB_ARIB_STR("[4K]")},
+	{0x1F19F, LIBISDB_ARIB_STR("[8K]")},
+	{0x1F1A0, LIBISDB_ARIB_STR("[5.1]")},
+	{0x1F1A1, LIBISDB_ARIB_STR("[7.1]")},
+	{0x1F1A2, LIBISDB_ARIB_STR("[22.2]")},
+	{0x1F1A3, LIBISDB_ARIB_STR("[60P]")},
+	{0x1F1A4, LIBISDB_ARIB_STR("[120P]")},
+	{0x1F1A5, LIBISDB_ARIB_STR("[d]")},
+	{0x1F1A6, LIBISDB_ARIB_STR("[HC]")},
+	{0x1F1A7, LIBISDB_ARIB_STR("[HDR]")},
+	{0x1F1A8, LIBISDB_ARIB_STR("[Hi-Res]")},
+	{0x1F1A9, LIBISDB_ARIB_STR("[Lossless]")},
+	{0x1F1AA, LIBISDB_ARIB_STR("[SHV]")},
+	{0x1F1AB, LIBISDB_ARIB_STR("[UHD]")},
+	{0x1F1AC, LIBISDB_ARIB_STR("[VOD]")},
+	{0x1F23B, LIBISDB_ARIB_STR("[配]")},
+};
+
+
+const InternalChar * GetSymbolText(char32_t Code)
+{
+	const SymbolText *pEnd = std::end(SymbolTextTable);
+	const SymbolText *p = std::lower_bound(
+		std::begin(SymbolTextTable), pEnd, Code,
+		[](const SymbolText &Entry, char32_t Code) { return Entry.Code < Code; });
+
+	if ((p != pEnd) && (p->Code == Code))
+		return p->pText;
+
+	if (Code < 0x100)
+		return nullptr;
+
+	return ARIBStringDecoder::GetSymbolAlternativeText(Code);
+}
 
 
 void AppendCodePoint(char32_t Code, InternalString *pString)
@@ -136,7 +183,8 @@ void AppendCodePoint(char32_t Code, InternalString *pString)
 
 
 
-bool DecodeMMTString(const uint8_t *pData, size_t Length, ReturnArg<String> Dst)
+bool DecodeMMTString(
+	const uint8_t *pData, size_t Length, ReturnArg<String> Dst, ARIBStringDecoder::DecodeFlag Flags)
 {
 	if (!Dst)
 		return false;
@@ -146,6 +194,7 @@ bool DecodeMMTString(const uint8_t *pData, size_t Length, ReturnArg<String> Dst)
 	if ((pData == nullptr) && (Length > 0))
 		return false;
 
+	const bool UnicodeSymbol = !!(Flags & ARIBStringDecoder::DecodeFlag::UnicodeSymbol);
 	InternalString String;
 	String.reserve(Length);
 
@@ -156,7 +205,11 @@ bool DecodeMMTString(const uint8_t *pData, size_t Length, ReturnArg<String> Dst)
 		if (Code == U'\r') {
 			String += INTERNAL_NEWLINE;
 		} else if ((Code >= 0x20) && ((Code < 0x7F) || (Code >= 0xA0))) {
-			AppendCodePoint(Code, &String);
+			const InternalChar *pText = UnicodeSymbol ? nullptr : GetSymbolText(Code);
+			if (pText != nullptr)
+				String += pText;
+			else
+				AppendCodePoint(Code, &String);
 		}
 	}
 
@@ -178,9 +231,9 @@ bool DecodeMMTString(const uint8_t *pData, size_t Length, ReturnArg<String> Dst)
 }
 
 
-bool DecodeMMTString(const ARIBString &Src, ReturnArg<String> Dst)
+bool DecodeMMTString(const ARIBString &Src, ReturnArg<String> Dst, ARIBStringDecoder::DecodeFlag Flags)
 {
-	return DecodeMMTString(Src.data(), Src.length(), Dst);
+	return DecodeMMTString(Src.data(), Src.length(), Dst, Flags);
 }
 
 

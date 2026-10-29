@@ -736,6 +736,192 @@ void ARIBStringDecoder::PutLatinSpecialChar(uint16_t Code, InternalString *pDstS
 }
 
 
+namespace
+{
+
+const ARIBStringDecoder::InternalChar * const SymbolsTable_90_45[] = {
+	ARIB_STR("10."),        ARIB_STR("11."),        ARIB_STR("12."),        ARIB_STR("[HV]"),       // 0x7A4D - 0x7A50  90/45 - 90/48
+	ARIB_STR("[SD]"),       ARIB_STR("[Ｐ]"),       ARIB_STR("[Ｗ]"),       ARIB_STR("[MV]"),       // 0x7A51 - 0x7A54  90/49 - 90/52
+	ARIB_STR("[手]"),       ARIB_STR("[字]"),       ARIB_STR("[双]"),       ARIB_STR("[デ]"),       // 0x7A55 - 0x7A58  90/53 - 90/56
+	ARIB_STR("[Ｓ]"),       ARIB_STR("[二]"),       ARIB_STR("[多]"),       ARIB_STR("[解]"),       // 0x7A59 - 0x7A5C  90/57 - 90/60
+	ARIB_STR("[SS]"),       ARIB_STR("[Ｂ]"),       ARIB_STR("[Ｎ]"),       ARIB_STR("■"),         // 0x7A5D - 0x7A60  90/61 - 90/64
+	ARIB_STR("●"),         ARIB_STR("[天]"),       ARIB_STR("[交]"),       ARIB_STR("[映]"),       // 0x7A61 - 0x7A64  90/65 - 90/68
+	ARIB_STR("[無]"),       ARIB_STR("[料]"),       ARIB_STR("[年齢制限]"), ARIB_STR("[前]"),       // 0x7A65 - 0x7A68  90/69 - 90/72
+	ARIB_STR("[後]"),       ARIB_STR("[再]"),       ARIB_STR("[新]"),       ARIB_STR("[初]"),       // 0x7A69 - 0x7A6C  90/73 - 90/76
+	ARIB_STR("[終]"),       ARIB_STR("[生]"),       ARIB_STR("[販]"),       ARIB_STR("[声]"),       // 0x7A6D - 0x7A70  90/77 - 90/80
+	ARIB_STR("[吹]"),       ARIB_STR("[PPV]"),      ARIB_STR("(秘)"),       ARIB_STR("ほか"),       // 0x7A71 - 0x7A74  90/81 - 90/84
+};
+const ARIBStringDecoder::InternalChar * const SymbolsTable_90_45_U[] = {
+	ARIB_STR("\u2491"),     ARIB_STR("\u2492"),     ARIB_STR("\u2493"),     ARIB_STR("\U0001f14a"), // 0x7A4D - 0x7A50  90/45 - 90/48
+	ARIB_STR("\U0001f14c"), ARIB_STR("\U0001f13f"), ARIB_STR("\U0001f146"), ARIB_STR("\U0001f14b"), // 0x7A51 - 0x7A54  90/49 - 90/52
+	ARIB_STR("\U0001f210"), ARIB_STR("\U0001f211"), ARIB_STR("\U0001f212"), ARIB_STR("\U0001f213"), // 0x7A55 - 0x7A58  90/53 - 90/56
+	ARIB_STR("\U0001f142"), ARIB_STR("\U0001f214"), ARIB_STR("\U0001f215"), ARIB_STR("\U0001f216"), // 0x7A59 - 0x7A5C  90/57 - 90/60
+	ARIB_STR("\U0001f14d"), ARIB_STR("\U0001f131"), ARIB_STR("\U0001f13d"), ARIB_STR("\u2b1b"),     // 0x7A5D - 0x7A60  90/61 - 90/64
+	ARIB_STR("\u2b24"),     ARIB_STR("\U0001f217"), ARIB_STR("\U0001f218"), ARIB_STR("\U0001f219"), // 0x7A61 - 0x7A64  90/65 - 90/68
+	ARIB_STR("\U0001f21a"), ARIB_STR("\U0001f21b"), ARIB_STR("\u26bf"),     ARIB_STR("\U0001f21c"), // 0x7A65 - 0x7A68  90/69 - 90/72
+	ARIB_STR("\U0001f21d"), ARIB_STR("\U0001f21e"), ARIB_STR("\U0001f21f"), ARIB_STR("\U0001f220"), // 0x7A69 - 0x7A6C  90/73 - 90/76
+	ARIB_STR("\U0001f221"), ARIB_STR("\U0001f222"), ARIB_STR("\U0001f223"), ARIB_STR("\U0001f224"), // 0x7A6D - 0x7A70  90/77 - 90/80
+	ARIB_STR("\U0001f225"), ARIB_STR("\U0001f14e"), ARIB_STR("\u3299"),     ARIB_STR("\U0001f200"), // 0x7A71 - 0x7A74  90/81 - 90/84
+};
+
+const ARIBStringDecoder::InternalChar * const SymbolsTable_92[] = {
+	ARIB_STR("→"),         ARIB_STR("←"),         ARIB_STR("↑"),         ARIB_STR("↓"),         // 0x7C21 - 0x7C24  92/01 - 92/04
+	ARIB_STR("○"),         ARIB_STR("●"),         ARIB_STR("年"),         ARIB_STR("月"),         // 0x7C25 - 0x7C28  92/05 - 92/08
+	ARIB_STR("日"),         ARIB_STR("円"),         ARIB_STR("㎡"),         ARIB_STR("立方ｍ"),     // 0x7C29 - 0x7C2C  92/09 - 92/12
+	ARIB_STR("㎝"),         ARIB_STR("平方㎝"),     ARIB_STR("立方㎝"),     ARIB_STR("０."),        // 0x7C2D - 0x7C30  92/13 - 92/16
+	ARIB_STR("１."),        ARIB_STR("２."),        ARIB_STR("３."),        ARIB_STR("４."),        // 0x7C31 - 0x7C34  92/17 - 92/20
+	ARIB_STR("５."),        ARIB_STR("６."),        ARIB_STR("７."),        ARIB_STR("８."),        // 0x7C35 - 0x7C38  92/21 - 92/24
+	ARIB_STR("９."),        ARIB_STR("氏"),         ARIB_STR("副"),         ARIB_STR("元"),         // 0x7C39 - 0x7C3C  92/25 - 92/28
+	ARIB_STR("故"),         ARIB_STR("前"),         ARIB_STR("新"),         ARIB_STR("０,"),        // 0x7C3D - 0x7C40  92/29 - 92/32
+	ARIB_STR("１,"),        ARIB_STR("２,"),        ARIB_STR("３,"),        ARIB_STR("４,"),        // 0x7C41 - 0x7C44  92/33 - 92/36
+	ARIB_STR("５,"),        ARIB_STR("６,"),        ARIB_STR("７,"),        ARIB_STR("８,"),        // 0x7C45 - 0x7C48  92/37 - 92/40
+	ARIB_STR("９,"),        ARIB_STR("(社)"),       ARIB_STR("(財)"),       ARIB_STR("(有)"),       // 0x7C49 - 0x7C4C  92/41 - 92/44
+	ARIB_STR("(株)"),       ARIB_STR("(代)"),       ARIB_STR("(問)"),       ARIB_STR("＞"),         // 0x7C4D - 0x7C50  92/45 - 92/48
+	ARIB_STR("＜"),         ARIB_STR("【"),         ARIB_STR("】"),         ARIB_STR("◇"),         // 0x7C51 - 0x7C54  92/49 - 92/52
+	ARIB_STR("^2"),         ARIB_STR("^3"),         ARIB_STR("(CD)"),       ARIB_STR("(vn)"),       // 0x7C55 - 0x7C58  92/43 - 92/56
+	ARIB_STR("(ob)"),       ARIB_STR("(cb)"),       ARIB_STR("(ce"),        ARIB_STR("mb)"),        // 0x7C59 - 0x7C5C  92/57 - 92/60
+	ARIB_STR("(hp)"),       ARIB_STR("(br)"),       ARIB_STR("(p)"),        ARIB_STR("(s)"),        // 0x7C5D - 0x7C60  92/61 - 92/64
+	ARIB_STR("(ms)"),       ARIB_STR("(t)"),        ARIB_STR("(bs)"),       ARIB_STR("(b)"),        // 0x7C61 - 0x7C64  92/65 - 92/68
+	ARIB_STR("(tb)"),       ARIB_STR("(tp)"),       ARIB_STR("(ds)"),       ARIB_STR("(ag)"),       // 0x7C65 - 0x7C68  92/69 - 92/72
+	ARIB_STR("(eg)"),       ARIB_STR("(vo)"),       ARIB_STR("(fl)"),       ARIB_STR("(ke"),        // 0x7C69 - 0x7C6C  92/73 - 92/76
+	ARIB_STR("y)"),         ARIB_STR("(sa"),        ARIB_STR("x)"),         ARIB_STR("(sy"),        // 0x7C6D - 0x7C70  92/77 - 92/80
+	ARIB_STR("n)"),         ARIB_STR("(or"),        ARIB_STR("g)"),         ARIB_STR("(pe"),        // 0x7C71 - 0x7C74  92/81 - 92/84
+	ARIB_STR("r)"),         ARIB_STR("(R)"),        ARIB_STR("(C)"),        ARIB_STR("(箏)"),       // 0x7C75 - 0x7C78  92/85 - 92/88
+	ARIB_STR("DJ"),         ARIB_STR("[演]"),       ARIB_STR("Fax"),                                // 0x7C79 - 0x7C7B  92/89 - 92/91
+};
+const ARIBStringDecoder::InternalChar * const SymbolsTable_92_U[] = {
+	ARIB_STR("\u27a1"),     ARIB_STR("\u2b05"),     ARIB_STR("\u2b06"),     ARIB_STR("\u2b07"),     // 0x7C21 - 0x7C24  92/01 - 92/04
+	ARIB_STR("\u2b2f"),     ARIB_STR("\u2b2e"),     ARIB_STR("年"),         ARIB_STR("月"),         // 0x7C25 - 0x7C28  92/05 - 92/08
+	ARIB_STR("日"),         ARIB_STR("円"),         ARIB_STR("㎡"),         ARIB_STR("\u33a5"),     // 0x7C29 - 0x7C2C  92/09 - 92/12
+	ARIB_STR("㎝"),         ARIB_STR("\u33a0"),     ARIB_STR("\u33a4"),     ARIB_STR("\U0001f100"), // 0x7C2D - 0x7C30  92/13 - 92/16
+	ARIB_STR("\u2488"),     ARIB_STR("\u2489"),     ARIB_STR("\u248a"),     ARIB_STR("\u248b"),     // 0x7C31 - 0x7C34  92/17 - 92/20
+	ARIB_STR("\u248c"),     ARIB_STR("\u248d"),     ARIB_STR("\u248e"),     ARIB_STR("\u248f"),     // 0x7C35 - 0x7C38  92/21 - 92/24
+	ARIB_STR("\u2490"),     ARIB_STR("氏"),         ARIB_STR("副"),         ARIB_STR("元"),         // 0x7C39 - 0x7C3C  92/25 - 92/28
+	ARIB_STR("故"),         ARIB_STR("前"),         ARIB_STR("新"),         ARIB_STR("\U0001f101"), // 0x7C3D - 0x7C40  92/29 - 92/32
+	ARIB_STR("\U0001f102"), ARIB_STR("\U0001f103"), ARIB_STR("\U0001f104"), ARIB_STR("\U0001f105"), // 0x7C41 - 0x7C44  92/33 - 92/36
+	ARIB_STR("\U0001f106"), ARIB_STR("\U0001f107"), ARIB_STR("\U0001f108"), ARIB_STR("\U0001f109"), // 0x7C45 - 0x7C48  92/37 - 92/40
+	ARIB_STR("\U0001f10a"), ARIB_STR("\u3233"),     ARIB_STR("\u3236"),     ARIB_STR("\u3232"),     // 0x7C49 - 0x7C4C  92/41 - 92/44
+	ARIB_STR("\u3231"),     ARIB_STR("\u3239"),     ARIB_STR("\u3244"),     ARIB_STR("\u25b6"),     // 0x7C4D - 0x7C50  92/45 - 92/48
+	ARIB_STR("\u25c0"),     ARIB_STR("\u3016"),     ARIB_STR("\u3017"),     ARIB_STR("\u27d0"),     // 0x7C51 - 0x7C54  92/49 - 92/52
+	ARIB_STR("\u00b2"),     ARIB_STR("\u00b3"),     ARIB_STR("\U0001f12d"), ARIB_STR("(vn)"),       // 0x7C55 - 0x7C58  92/53 - 92/56
+	ARIB_STR("(ob)"),       ARIB_STR("(cb)"),       ARIB_STR("(ce"),        ARIB_STR("mb)"),        // 0x7C59 - 0x7C5C  92/57 - 92/60
+	ARIB_STR("(hp)"),       ARIB_STR("(br)"),       ARIB_STR("(p)"),        ARIB_STR("(s)"),        // 0x7C5D - 0x7C60  92/61 - 92/64
+	ARIB_STR("(ms)"),       ARIB_STR("(t)"),        ARIB_STR("(bs)"),       ARIB_STR("(b)"),        // 0x7C61 - 0x7C64  92/65 - 92/68
+	ARIB_STR("(tb)"),       ARIB_STR("(tp)"),       ARIB_STR("(ds)"),       ARIB_STR("(ag)"),       // 0x7C65 - 0x7C68  92/69 - 92/72
+	ARIB_STR("(eg)"),       ARIB_STR("(vo)"),       ARIB_STR("(fl)"),       ARIB_STR("(ke"),        // 0x7C69 - 0x7C6C  92/73 - 92/76
+	ARIB_STR("y)"),         ARIB_STR("(sa"),        ARIB_STR("x)"),         ARIB_STR("(sy"),        // 0x7C6D - 0x7C70  92/77 - 92/80
+	ARIB_STR("n)"),         ARIB_STR("(or"),        ARIB_STR("g)"),         ARIB_STR("(pe"),        // 0x7C71 - 0x7C74  92/81 - 92/84
+	ARIB_STR("r)"),         ARIB_STR("\U0001f12c"), ARIB_STR("\U0001f12b"), ARIB_STR("\u3247"),     // 0x7C75 - 0x7C78  92/85 - 92/88
+	ARIB_STR("\U0001f190"), ARIB_STR("\U0001f226"), ARIB_STR("\u213b"),                             // 0x7C79 - 0x7C7B  92/89 - 92/91
+};
+
+const ARIBStringDecoder::InternalChar * const SymbolsTable_93[] = {
+	ARIB_STR("(月)"),       ARIB_STR("(火)"),       ARIB_STR("(水)"),       ARIB_STR("(木)"),       // 0x7D21 - 0x7D24  93/01 - 93/04
+	ARIB_STR("(金)"),       ARIB_STR("(土)"),       ARIB_STR("(日)"),       ARIB_STR("(祝)"),       // 0x7D25 - 0x7D28  93/05 - 93/08
+	ARIB_STR("㍾"),         ARIB_STR("㍽"),         ARIB_STR("㍼"),         ARIB_STR("㍻"),         // 0x7D29 - 0x7D2C  93/09 - 93/12
+	ARIB_STR("№"),         ARIB_STR("℡"),         ARIB_STR("(〒)"),       ARIB_STR("○"),         // 0x7D2D - 0x7D30  93/13 - 93/16
+	ARIB_STR("〔本〕"),     ARIB_STR("〔三〕"),     ARIB_STR("〔二〕"),     ARIB_STR("〔安〕"),     // 0x7D31 - 0x7D34  93/17 - 93/20
+	ARIB_STR("〔点〕"),     ARIB_STR("〔打〕"),     ARIB_STR("〔盗〕"),     ARIB_STR("〔勝〕"),     // 0x7D35 - 0x7D38  93/21 - 93/24
+	ARIB_STR("〔敗〕"),     ARIB_STR("〔Ｓ〕"),     ARIB_STR("［投］"),     ARIB_STR("［捕］"),     // 0x7D39 - 0x7D3C  93/25 - 93/28
+	ARIB_STR("［一］"),     ARIB_STR("［二］"),     ARIB_STR("［三］"),     ARIB_STR("［遊］"),     // 0x7D3D - 0x7D40  93/29 - 93/32
+	ARIB_STR("［左］"),     ARIB_STR("［中］"),     ARIB_STR("［右］"),     ARIB_STR("［指］"),     // 0x7D41 - 0x7D44  93/33 - 93/46
+	ARIB_STR("［走］"),     ARIB_STR("［打］"),     ARIB_STR("㍑"),         ARIB_STR("㎏"),         // 0x7D45 - 0x7D48  93/37 - 93/40
+	ARIB_STR("Hz"),         ARIB_STR("ha"),         ARIB_STR("km"),         ARIB_STR("平方km"),     // 0x7D49 - 0x7D4C  93/41 - 93/44
+	ARIB_STR("hPa"),        nullptr,                nullptr,                ARIB_STR("1/2"),        // 0x7D4D - 0x7D50  93/45 - 93/48
+	ARIB_STR("0/3"),        ARIB_STR("1/3"),        ARIB_STR("2/3"),        ARIB_STR("1/4"),        // 0x7D51 - 0x7D54  93/49 - 93/52
+	ARIB_STR("3/4"),        ARIB_STR("1/5"),        ARIB_STR("2/5"),        ARIB_STR("3/5"),        // 0x7D55 - 0x7D58  93/53 - 93/56
+	ARIB_STR("4/5"),        ARIB_STR("1/6"),        ARIB_STR("5/6"),        ARIB_STR("1/7"),        // 0x7D59 - 0x7D5C  93/57 - 93/60
+	ARIB_STR("1/8"),        ARIB_STR("1/9"),        ARIB_STR("1/10"),       ARIB_STR("晴れ"),       // 0x7D5D - 0x7D60  93/61 - 93/64
+	ARIB_STR("曇り"),       ARIB_STR("雨"),         ARIB_STR("雪"),         ARIB_STR("△"),         // 0x7D61 - 0x7D64  93/65 - 93/68
+	ARIB_STR("▲"),         ARIB_STR("▽"),         ARIB_STR("▼"),         ARIB_STR("◆"),         // 0x7D65 - 0x7D68  93/69 - 93/72
+	ARIB_STR("・"),         ARIB_STR("・"),         ARIB_STR("・"),         ARIB_STR("◇"),         // 0x7D69 - 0x7D6C  93/73 - 93/76
+	ARIB_STR("◎"),         ARIB_STR("!!"),         ARIB_STR("!?"),         ARIB_STR("曇/晴"),      // 0x7D6D - 0x7D70  93/77 - 93/80
+	ARIB_STR("雨"),         ARIB_STR("雨"),         ARIB_STR("雪"),         ARIB_STR("大雪"),       // 0x7D71 - 0x7D74  93/81 - 93/84
+	ARIB_STR("雷"),         ARIB_STR("雷雨"),       ARIB_STR("　"),         ARIB_STR("・"),         // 0x7D75 - 0x7D78  93/85 - 93/88
+	ARIB_STR("・"),         ARIB_STR("♪"),         ARIB_STR("℡"),                                 // 0x7D79 - 0x7D7B  93/89 - 93/91
+};
+const ARIBStringDecoder::InternalChar * const SymbolsTable_93_U[] = {
+	ARIB_STR("\u322a"),     ARIB_STR("\u322b"),     ARIB_STR("\u322c"),     ARIB_STR("\u322d"),     // 0x7D21 - 0x7D24  93/01 - 93/04
+	ARIB_STR("\u322e"),     ARIB_STR("\u322f"),     ARIB_STR("\u3230"),     ARIB_STR("\u3237"),     // 0x7D25 - 0x7D28  93/05 - 93/08
+	ARIB_STR("㍾"),         ARIB_STR("㍽"),         ARIB_STR("㍼"),         ARIB_STR("㍻"),         // 0x7D29 - 0x7D2C  93/09 - 93/12
+	ARIB_STR("№"),         ARIB_STR("℡"),         ARIB_STR("\u3036"),     ARIB_STR("\u26be"),     // 0x7D2D - 0x7D30  93/13 - 93/16
+	ARIB_STR("\U0001f240"), ARIB_STR("\U0001f241"), ARIB_STR("\U0001f242"), ARIB_STR("\U0001f243"), // 0x7D31 - 0x7D34  93/17 - 93/20
+	ARIB_STR("\U0001f244"), ARIB_STR("\U0001f245"), ARIB_STR("\U0001f246"), ARIB_STR("\U0001f247"), // 0x7D35 - 0x7D38  93/21 - 93/24
+	ARIB_STR("\U0001f248"), ARIB_STR("\U0001f12a"), ARIB_STR("\U0001f227"), ARIB_STR("\U0001f228"), // 0x7D39 - 0x7D3C  93/25 - 93/28
+	ARIB_STR("\U0001f229"), ARIB_STR("\U0001f214"), ARIB_STR("\U0001f22a"), ARIB_STR("\U0001f22b"), // 0x7D3D - 0x7D40  93/29 - 93/32
+	ARIB_STR("\U0001f22c"), ARIB_STR("\U0001f22d"), ARIB_STR("\U0001f22e"), ARIB_STR("\U0001f22f"), // 0x7D41 - 0x7D44  93/33 - 93/36
+	ARIB_STR("\U0001f230"), ARIB_STR("\U0001f231"), ARIB_STR("\u2113"),     ARIB_STR("㎏"),         // 0x7D45 - 0x7D48  93/37 - 93/40
+	ARIB_STR("\u3390"),     ARIB_STR("\u33ca"),     ARIB_STR("\u339e"),     ARIB_STR("\u33a2"),     // 0x7D49 - 0x7D4C  93/41 - 93/44
+	ARIB_STR("\u3371"),     nullptr,                nullptr,                ARIB_STR("\u00bd"),     // 0x7D4D - 0x7D50  93/45 - 93/48
+	ARIB_STR("\u2189"),     ARIB_STR("\u2153"),     ARIB_STR("\u2154"),     ARIB_STR("\u00bc"),     // 0x7D51 - 0x7D54  93/49 - 93/52
+	ARIB_STR("\u00be"),     ARIB_STR("\u2155"),     ARIB_STR("\u2156"),     ARIB_STR("\u2157"),     // 0x7D55 - 0x7D58  93/53 - 93/56
+	ARIB_STR("\u2158"),     ARIB_STR("\u2159"),     ARIB_STR("\u215a"),     ARIB_STR("\u2150"),     // 0x7D59 - 0x7D5C  93/57 - 93/60
+	ARIB_STR("\u215b"),     ARIB_STR("\u2151"),     ARIB_STR("\u2152"),     ARIB_STR("\u2600"),     // 0x7D5D - 0x7D60  93/61 - 93/64
+	ARIB_STR("\u2601"),     ARIB_STR("\u2602"),     ARIB_STR("\u26c4"),     ARIB_STR("\u2616"),     // 0x7D61 - 0x7D64  93/65 - 93/68
+	ARIB_STR("\u2617"),     ARIB_STR("\u26c9"),     ARIB_STR("\u26ca"),     ARIB_STR("\u2666"),     // 0x7D65 - 0x7D68  93/69 - 93/72
+	ARIB_STR("\u2665"),     ARIB_STR("\u2663"),     ARIB_STR("\u2660"),     ARIB_STR("\u26cb"),     // 0x7D69 - 0x7D6C  93/73 - 93/76
+	ARIB_STR("\u2a00"),     ARIB_STR("\u203c"),     ARIB_STR("\u2049"),     ARIB_STR("\u26c5"),     // 0x7D6D - 0x7D70  93/77 - 93/80
+	ARIB_STR("\u2614"),     ARIB_STR("\u26c6"),     ARIB_STR("\u2603"),     ARIB_STR("\u26c7"),     // 0x7D71 - 0x7D74  93/81 - 93/84
+	ARIB_STR("\u26a1"),     ARIB_STR("\u26c8"),     ARIB_STR("　"),         ARIB_STR("\u269e"),     // 0x7D75 - 0x7D78  93/85 - 93/88
+	ARIB_STR("\u269f"),     ARIB_STR("\u266c"),     ARIB_STR("\u260e"),                             // 0x7D79 - 0x7D7B  93/89 - 93/91
+};
+
+const ARIBStringDecoder::InternalChar * const SymbolsTable_94[] = {
+	ARIB_STR("Ⅰ"),         ARIB_STR("Ⅱ"),         ARIB_STR("Ⅲ"),         ARIB_STR("Ⅳ"),         // 0x7E21 - 0x7E24  94/01 - 94/04
+	ARIB_STR("Ⅴ"),         ARIB_STR("Ⅵ"),         ARIB_STR("Ⅶ"),         ARIB_STR("Ⅷ"),         // 0x7E25 - 0x7E28  94/05 - 94/08
+	ARIB_STR("Ⅸ"),         ARIB_STR("Ⅹ"),         ARIB_STR("XI"),         ARIB_STR("XⅡ"),        // 0x7E29 - 0x7E2C  94/09 - 94/12
+	ARIB_STR("⑰"),         ARIB_STR("⑱"),         ARIB_STR("⑲"),         ARIB_STR("⑳"),         // 0x7E2D - 0x7E30  94/13 - 94/16
+	ARIB_STR("(1)"),        ARIB_STR("(2)"),        ARIB_STR("(3)"),        ARIB_STR("(4)"),        // 0x7E31 - 0x7E34  94/17 - 94/20
+	ARIB_STR("(5)"),        ARIB_STR("(6)"),        ARIB_STR("(7)"),        ARIB_STR("(8)"),        // 0x7E35 - 0x7E38  94/21 - 94/24
+	ARIB_STR("(9)"),        ARIB_STR("(10)"),       ARIB_STR("(11)"),       ARIB_STR("(12)"),       // 0x7E39 - 0x7E3C  94/25 - 94/28
+	ARIB_STR("(21)"),       ARIB_STR("(22)"),       ARIB_STR("(23)"),       ARIB_STR("(24)"),       // 0x7E3D - 0x7E40  94/29 - 94/32
+	ARIB_STR("(A)"),        ARIB_STR("(B)"),        ARIB_STR("(C)"),        ARIB_STR("(D)"),        // 0x7E41 - 0x7E44  94/33 - 94/36
+	ARIB_STR("(E)"),        ARIB_STR("(F)"),        ARIB_STR("(G)"),        ARIB_STR("(H)"),        // 0x7E45 - 0x7E48  94/37 - 94/40
+	ARIB_STR("(I)"),        ARIB_STR("(J)"),        ARIB_STR("(K)"),        ARIB_STR("(L)"),        // 0x7E49 - 0x7E4C  94/41 - 94/44
+	ARIB_STR("(M)"),        ARIB_STR("(N)"),        ARIB_STR("(O)"),        ARIB_STR("(P)"),        // 0x7E4D - 0x7E50  94/45 - 94/48
+	ARIB_STR("(Q)"),        ARIB_STR("(R)"),        ARIB_STR("(S)"),        ARIB_STR("(T)"),        // 0x7E51 - 0x7E54  94/49 - 94/52
+	ARIB_STR("(U)"),        ARIB_STR("(V)"),        ARIB_STR("(W)"),        ARIB_STR("(X)"),        // 0x7E55 - 0x7E58  94/53 - 94/56
+	ARIB_STR("(Y)"),        ARIB_STR("(Z)"),        ARIB_STR("(25)"),       ARIB_STR("(26)"),       // 0x7E59 - 0x7E5C  94/57 - 94/60
+	ARIB_STR("(27)"),       ARIB_STR("(28)"),       ARIB_STR("(29)"),       ARIB_STR("(30)"),       // 0x7E5D - 0x7E60  94/61 - 94/64
+	ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E61 - 0x7E64  94/65 - 94/68
+	ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E65 - 0x7E68  94/69 - 94/72
+	ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E69 - 0x7E6C  94/73 - 94/76
+	ARIB_STR("⑬"),         ARIB_STR("⑭"),         ARIB_STR("⑮"),         ARIB_STR("⑯"),         // 0x7E6D - 0x7E70  94/77 - 94/80
+	ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E71 - 0x7E74  94/81 - 94/84
+	ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E75 - 0x7E78  94/85 - 94/88
+	ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E79 - 0x7E7C  94/89 - 94/92
+	ARIB_STR("(31)"),                                                                               // 0x7E7D - 0x7E7D  94/93 - 94/93
+};
+const ARIBStringDecoder::InternalChar * const SymbolsTable_94_U[] = {
+	ARIB_STR("Ⅰ"),         ARIB_STR("Ⅱ"),         ARIB_STR("Ⅲ"),         ARIB_STR("Ⅳ"),         // 0x7E21 - 0x7E24  94/01 - 94/04
+	ARIB_STR("Ⅴ"),         ARIB_STR("Ⅵ"),         ARIB_STR("Ⅶ"),         ARIB_STR("Ⅷ"),         // 0x7E25 - 0x7E28  94/05 - 94/08
+	ARIB_STR("Ⅸ"),         ARIB_STR("Ⅹ"),         ARIB_STR("\u216a"),     ARIB_STR("\u216b"),     // 0x7E29 - 0x7E2C  94/09 - 94/12
+	ARIB_STR("⑰"),         ARIB_STR("⑱"),         ARIB_STR("⑲"),         ARIB_STR("⑳"),         // 0x7E2D - 0x7E30  94/13 - 94/16
+	ARIB_STR("\u2474"),     ARIB_STR("\u2475"),     ARIB_STR("\u2476"),     ARIB_STR("\u2477"),     // 0x7E31 - 0x7E34  94/17 - 94/20
+	ARIB_STR("\u2478"),     ARIB_STR("\u2479"),     ARIB_STR("\u247a"),     ARIB_STR("\u247b"),     // 0x7E35 - 0x7E38  94/21 - 94/24
+	ARIB_STR("\u247c"),     ARIB_STR("\u247d"),     ARIB_STR("\u247e"),     ARIB_STR("\u247f"),     // 0x7E39 - 0x7E3C  94/25 - 94/28
+	ARIB_STR("\u3251"),     ARIB_STR("\u3252"),     ARIB_STR("\u3253"),     ARIB_STR("\u3254"),     // 0x7E3D - 0x7E40  94/29 - 94/32
+	ARIB_STR("\U0001f110"), ARIB_STR("\U0001f111"), ARIB_STR("\U0001f112"), ARIB_STR("\U0001f113"), // 0x7E41 - 0x7E44  94/33 - 94/36
+	ARIB_STR("\U0001f114"), ARIB_STR("\U0001f115"), ARIB_STR("\U0001f116"), ARIB_STR("\U0001f117"), // 0x7E45 - 0x7E48  94/37 - 94/40
+	ARIB_STR("\U0001f118"), ARIB_STR("\U0001f119"), ARIB_STR("\U0001f11a"), ARIB_STR("\U0001f11b"), // 0x7E49 - 0x7E4C  94/41 - 94/44
+	ARIB_STR("\U0001f11c"), ARIB_STR("\U0001f11d"), ARIB_STR("\U0001f11e"), ARIB_STR("\U0001f11f"), // 0x7E4D - 0x7E50  94/45 - 94/48
+	ARIB_STR("\U0001f120"), ARIB_STR("\U0001f121"), ARIB_STR("\U0001f122"), ARIB_STR("\U0001f123"), // 0x7E51 - 0x7E54  94/49 - 94/52
+	ARIB_STR("\U0001f124"), ARIB_STR("\U0001f125"), ARIB_STR("\U0001f126"), ARIB_STR("\U0001f127"), // 0x7E55 - 0x7E58  94/53 - 94/56
+	ARIB_STR("\U0001f128"), ARIB_STR("\U0001f129"), ARIB_STR("\u3255"),     ARIB_STR("\u3256"),     // 0x7E59 - 0x7E5C  94/57 - 94/60
+	ARIB_STR("\u3257"),     ARIB_STR("\u3258"),     ARIB_STR("\u3259"),     ARIB_STR("\u325a"),     // 0x7E5D - 0x7E60  94/61 - 94/64
+	ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E61 - 0x7E64  94/65 - 94/68
+	ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E65 - 0x7E68  94/69 - 94/72
+	ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E69 - 0x7E6C  94/73 - 94/76
+	ARIB_STR("⑬"),         ARIB_STR("⑭"),         ARIB_STR("⑮"),         ARIB_STR("⑯"),         // 0x7E6D - 0x7E70  94/77 - 94/80
+	ARIB_STR("\u2776"),     ARIB_STR("\u2777"),     ARIB_STR("\u2778"),     ARIB_STR("\u2779"),     // 0x7E71 - 0x7E74  94/81 - 94/84
+	ARIB_STR("\u277a"),     ARIB_STR("\u277b"),     ARIB_STR("\u277c"),     ARIB_STR("\u277d"),     // 0x7E75 - 0x7E78  94/85 - 94/88
+	ARIB_STR("\u277e"),     ARIB_STR("\u277f"),     ARIB_STR("\u24eb"),     ARIB_STR("\u24ec"),     // 0x7E79 - 0x7E7C  94/89 - 94/92
+	ARIB_STR("\u325b"),                                                                             // 0x7E7D - 0x7E7D  94/93 - 94/93
+};
+
+}
+
+
 void ARIBStringDecoder::PutSymbolsChar(uint16_t Code, InternalString *pDstString)
 {
 	// 追加シンボル文字コード変換
@@ -753,31 +939,6 @@ void ARIBStringDecoder::PutSymbolsChar(uint16_t Code, InternalString *pDstString
 		ARIB_STR("\u324c"),     ARIB_STR("\u324d"),     ARIB_STR("\u324e"),     ARIB_STR("\u324f"),     // 0x7A45 - 0x7A48  90/37 - 90/40
 	};
 
-	static const InternalChar * const SymbolsTable_90_45[] = {
-		ARIB_STR("10."),        ARIB_STR("11."),        ARIB_STR("12."),        ARIB_STR("[HV]"),       // 0x7A4D - 0x7A50  90/45 - 90/48
-		ARIB_STR("[SD]"),       ARIB_STR("[Ｐ]"),       ARIB_STR("[Ｗ]"),       ARIB_STR("[MV]"),       // 0x7A51 - 0x7A54  90/49 - 90/52
-		ARIB_STR("[手]"),       ARIB_STR("[字]"),       ARIB_STR("[双]"),       ARIB_STR("[デ]"),       // 0x7A55 - 0x7A58  90/53 - 90/56
-		ARIB_STR("[Ｓ]"),       ARIB_STR("[二]"),       ARIB_STR("[多]"),       ARIB_STR("[解]"),       // 0x7A59 - 0x7A5C  90/57 - 90/60
-		ARIB_STR("[SS]"),       ARIB_STR("[Ｂ]"),       ARIB_STR("[Ｎ]"),       ARIB_STR("■"),         // 0x7A5D - 0x7A60  90/61 - 90/64
-		ARIB_STR("●"),         ARIB_STR("[天]"),       ARIB_STR("[交]"),       ARIB_STR("[映]"),       // 0x7A61 - 0x7A64  90/65 - 90/68
-		ARIB_STR("[無]"),       ARIB_STR("[料]"),       ARIB_STR("[年齢制限]"), ARIB_STR("[前]"),       // 0x7A65 - 0x7A68  90/69 - 90/72
-		ARIB_STR("[後]"),       ARIB_STR("[再]"),       ARIB_STR("[新]"),       ARIB_STR("[初]"),       // 0x7A69 - 0x7A6C  90/73 - 90/76
-		ARIB_STR("[終]"),       ARIB_STR("[生]"),       ARIB_STR("[販]"),       ARIB_STR("[声]"),       // 0x7A6D - 0x7A70  90/77 - 90/80
-		ARIB_STR("[吹]"),       ARIB_STR("[PPV]"),      ARIB_STR("(秘)"),       ARIB_STR("ほか"),       // 0x7A71 - 0x7A74  90/81 - 90/84
-	};
-	static const InternalChar * const SymbolsTable_90_45_U[] = {
-		ARIB_STR("\u2491"),     ARIB_STR("\u2492"),     ARIB_STR("\u2493"),     ARIB_STR("\U0001f14a"), // 0x7A4D - 0x7A50  90/45 - 90/48
-		ARIB_STR("\U0001f14c"), ARIB_STR("\U0001f13f"), ARIB_STR("\U0001f146"), ARIB_STR("\U0001f14b"), // 0x7A51 - 0x7A54  90/49 - 90/52
-		ARIB_STR("\U0001f210"), ARIB_STR("\U0001f211"), ARIB_STR("\U0001f212"), ARIB_STR("\U0001f213"), // 0x7A55 - 0x7A58  90/53 - 90/56
-		ARIB_STR("\U0001f142"), ARIB_STR("\U0001f214"), ARIB_STR("\U0001f215"), ARIB_STR("\U0001f216"), // 0x7A59 - 0x7A5C  90/57 - 90/60
-		ARIB_STR("\U0001f14d"), ARIB_STR("\U0001f131"), ARIB_STR("\U0001f13d"), ARIB_STR("\u2b1b"),     // 0x7A5D - 0x7A60  90/61 - 90/64
-		ARIB_STR("\u2b24"),     ARIB_STR("\U0001f217"), ARIB_STR("\U0001f218"), ARIB_STR("\U0001f219"), // 0x7A61 - 0x7A64  90/65 - 90/68
-		ARIB_STR("\U0001f21a"), ARIB_STR("\U0001f21b"), ARIB_STR("\u26bf"),     ARIB_STR("\U0001f21c"), // 0x7A65 - 0x7A68  90/69 - 90/72
-		ARIB_STR("\U0001f21d"), ARIB_STR("\U0001f21e"), ARIB_STR("\U0001f21f"), ARIB_STR("\U0001f220"), // 0x7A69 - 0x7A6C  90/73 - 90/76
-		ARIB_STR("\U0001f221"), ARIB_STR("\U0001f222"), ARIB_STR("\U0001f223"), ARIB_STR("\U0001f224"), // 0x7A6D - 0x7A70  90/77 - 90/80
-		ARIB_STR("\U0001f225"), ARIB_STR("\U0001f14e"), ARIB_STR("\u3299"),     ARIB_STR("\U0001f200"), // 0x7A71 - 0x7A74  90/81 - 90/84
-	};
-
 	static const InternalChar * const SymbolsTable_91[] = {
 		ARIB_STR("\u26e3"),     ARIB_STR("\u2b56"),     ARIB_STR("\u2b57"),     ARIB_STR("\u2b58"),     // 0x7B21 - 0x7B24  91/01 - 91/04
 		ARIB_STR("\u2b59"),     ARIB_STR("\u2613"),     ARIB_STR("\u328b"),     ARIB_STR("\u3012"),     // 0x7B25 - 0x7B28  91/05 - 91/08
@@ -792,161 +953,6 @@ void ARIBStringDecoder::PutSymbolsChar(uint16_t Code, InternalString *pDstString
 		ARIB_STR("\u26fa"),     ARIB_STR("\U0001f17b"), ARIB_STR("\u260e"),     ARIB_STR("\u26fb"),     // 0x7B49 - 0x7B4C  91/41 - 91/44
 		ARIB_STR("\u26fc"),     ARIB_STR("\u26fd"),     ARIB_STR("\u26fe"),     ARIB_STR("\U0001f17c"), // 0x7B4D - 0x7B50  91/45 - 91/48
 		ARIB_STR("\u26ff"),                                                                             // 0x7B51 - 0x7B51  91/49 - 91/49
-	};
-
-	static const InternalChar * const SymbolsTable_92[] = {
-		ARIB_STR("→"),         ARIB_STR("←"),         ARIB_STR("↑"),         ARIB_STR("↓"),         // 0x7C21 - 0x7C24  92/01 - 92/04
-		ARIB_STR("○"),         ARIB_STR("●"),         ARIB_STR("年"),         ARIB_STR("月"),         // 0x7C25 - 0x7C28  92/05 - 92/08
-		ARIB_STR("日"),         ARIB_STR("円"),         ARIB_STR("㎡"),         ARIB_STR("立方ｍ"),     // 0x7C29 - 0x7C2C  92/09 - 92/12
-		ARIB_STR("㎝"),         ARIB_STR("平方㎝"),     ARIB_STR("立方㎝"),     ARIB_STR("０."),        // 0x7C2D - 0x7C30  92/13 - 92/16
-		ARIB_STR("１."),        ARIB_STR("２."),        ARIB_STR("３."),        ARIB_STR("４."),        // 0x7C31 - 0x7C34  92/17 - 92/20
-		ARIB_STR("５."),        ARIB_STR("６."),        ARIB_STR("７."),        ARIB_STR("８."),        // 0x7C35 - 0x7C38  92/21 - 92/24
-		ARIB_STR("９."),        ARIB_STR("氏"),         ARIB_STR("副"),         ARIB_STR("元"),         // 0x7C39 - 0x7C3C  92/25 - 92/28
-		ARIB_STR("故"),         ARIB_STR("前"),         ARIB_STR("新"),         ARIB_STR("０,"),        // 0x7C3D - 0x7C40  92/29 - 92/32
-		ARIB_STR("１,"),        ARIB_STR("２,"),        ARIB_STR("３,"),        ARIB_STR("４,"),        // 0x7C41 - 0x7C44  92/33 - 92/36
-		ARIB_STR("５,"),        ARIB_STR("６,"),        ARIB_STR("７,"),        ARIB_STR("８,"),        // 0x7C45 - 0x7C48  92/37 - 92/40
-		ARIB_STR("９,"),        ARIB_STR("(社)"),       ARIB_STR("(財)"),       ARIB_STR("(有)"),       // 0x7C49 - 0x7C4C  92/41 - 92/44
-		ARIB_STR("(株)"),       ARIB_STR("(代)"),       ARIB_STR("(問)"),       ARIB_STR("＞"),         // 0x7C4D - 0x7C50  92/45 - 92/48
-		ARIB_STR("＜"),         ARIB_STR("【"),         ARIB_STR("】"),         ARIB_STR("◇"),         // 0x7C51 - 0x7C54  92/49 - 92/52
-		ARIB_STR("^2"),         ARIB_STR("^3"),         ARIB_STR("(CD)"),       ARIB_STR("(vn)"),       // 0x7C55 - 0x7C58  92/43 - 92/56
-		ARIB_STR("(ob)"),       ARIB_STR("(cb)"),       ARIB_STR("(ce"),        ARIB_STR("mb)"),        // 0x7C59 - 0x7C5C  92/57 - 92/60
-		ARIB_STR("(hp)"),       ARIB_STR("(br)"),       ARIB_STR("(p)"),        ARIB_STR("(s)"),        // 0x7C5D - 0x7C60  92/61 - 92/64
-		ARIB_STR("(ms)"),       ARIB_STR("(t)"),        ARIB_STR("(bs)"),       ARIB_STR("(b)"),        // 0x7C61 - 0x7C64  92/65 - 92/68
-		ARIB_STR("(tb)"),       ARIB_STR("(tp)"),       ARIB_STR("(ds)"),       ARIB_STR("(ag)"),       // 0x7C65 - 0x7C68  92/69 - 92/72
-		ARIB_STR("(eg)"),       ARIB_STR("(vo)"),       ARIB_STR("(fl)"),       ARIB_STR("(ke"),        // 0x7C69 - 0x7C6C  92/73 - 92/76
-		ARIB_STR("y)"),         ARIB_STR("(sa"),        ARIB_STR("x)"),         ARIB_STR("(sy"),        // 0x7C6D - 0x7C70  92/77 - 92/80
-		ARIB_STR("n)"),         ARIB_STR("(or"),        ARIB_STR("g)"),         ARIB_STR("(pe"),        // 0x7C71 - 0x7C74  92/81 - 92/84
-		ARIB_STR("r)"),         ARIB_STR("(R)"),        ARIB_STR("(C)"),        ARIB_STR("(箏)"),       // 0x7C75 - 0x7C78  92/85 - 92/88
-		ARIB_STR("DJ"),         ARIB_STR("[演]"),       ARIB_STR("Fax"),                                // 0x7C79 - 0x7C7B  92/89 - 92/91
-	};
-	static const InternalChar * const SymbolsTable_92_U[] = {
-		ARIB_STR("\u27a1"),     ARIB_STR("\u2b05"),     ARIB_STR("\u2b06"),     ARIB_STR("\u2b07"),     // 0x7C21 - 0x7C24  92/01 - 92/04
-		ARIB_STR("\u2b2f"),     ARIB_STR("\u2b2e"),     ARIB_STR("年"),         ARIB_STR("月"),         // 0x7C25 - 0x7C28  92/05 - 92/08
-		ARIB_STR("日"),         ARIB_STR("円"),         ARIB_STR("㎡"),         ARIB_STR("\u33a5"),     // 0x7C29 - 0x7C2C  92/09 - 92/12
-		ARIB_STR("㎝"),         ARIB_STR("\u33a0"),     ARIB_STR("\u33a4"),     ARIB_STR("\U0001f100"), // 0x7C2D - 0x7C30  92/13 - 92/16
-		ARIB_STR("\u2488"),     ARIB_STR("\u2489"),     ARIB_STR("\u248a"),     ARIB_STR("\u248b"),     // 0x7C31 - 0x7C34  92/17 - 92/20
-		ARIB_STR("\u248c"),     ARIB_STR("\u248d"),     ARIB_STR("\u248e"),     ARIB_STR("\u248f"),     // 0x7C35 - 0x7C38  92/21 - 92/24
-		ARIB_STR("\u2490"),     ARIB_STR("氏"),         ARIB_STR("副"),         ARIB_STR("元"),         // 0x7C39 - 0x7C3C  92/25 - 92/28
-		ARIB_STR("故"),         ARIB_STR("前"),         ARIB_STR("新"),         ARIB_STR("\U0001f101"), // 0x7C3D - 0x7C40  92/29 - 92/32
-		ARIB_STR("\U0001f102"), ARIB_STR("\U0001f103"), ARIB_STR("\U0001f104"), ARIB_STR("\U0001f105"), // 0x7C41 - 0x7C44  92/33 - 92/36
-		ARIB_STR("\U0001f106"), ARIB_STR("\U0001f107"), ARIB_STR("\U0001f108"), ARIB_STR("\U0001f109"), // 0x7C45 - 0x7C48  92/37 - 92/40
-		ARIB_STR("\U0001f10a"), ARIB_STR("\u3233"),     ARIB_STR("\u3236"),     ARIB_STR("\u3232"),     // 0x7C49 - 0x7C4C  92/41 - 92/44
-		ARIB_STR("\u3231"),     ARIB_STR("\u3239"),     ARIB_STR("\u3244"),     ARIB_STR("\u25b6"),     // 0x7C4D - 0x7C50  92/45 - 92/48
-		ARIB_STR("\u25c0"),     ARIB_STR("\u3016"),     ARIB_STR("\u3017"),     ARIB_STR("\u27d0"),     // 0x7C51 - 0x7C54  92/49 - 92/52
-		ARIB_STR("\u00b2"),     ARIB_STR("\u00b3"),     ARIB_STR("\U0001f12d"), ARIB_STR("(vn)"),       // 0x7C55 - 0x7C58  92/53 - 92/56
-		ARIB_STR("(ob)"),       ARIB_STR("(cb)"),       ARIB_STR("(ce"),        ARIB_STR("mb)"),        // 0x7C59 - 0x7C5C  92/57 - 92/60
-		ARIB_STR("(hp)"),       ARIB_STR("(br)"),       ARIB_STR("(p)"),        ARIB_STR("(s)"),        // 0x7C5D - 0x7C60  92/61 - 92/64
-		ARIB_STR("(ms)"),       ARIB_STR("(t)"),        ARIB_STR("(bs)"),       ARIB_STR("(b)"),        // 0x7C61 - 0x7C64  92/65 - 92/68
-		ARIB_STR("(tb)"),       ARIB_STR("(tp)"),       ARIB_STR("(ds)"),       ARIB_STR("(ag)"),       // 0x7C65 - 0x7C68  92/69 - 92/72
-		ARIB_STR("(eg)"),       ARIB_STR("(vo)"),       ARIB_STR("(fl)"),       ARIB_STR("(ke"),        // 0x7C69 - 0x7C6C  92/73 - 92/76
-		ARIB_STR("y)"),         ARIB_STR("(sa"),        ARIB_STR("x)"),         ARIB_STR("(sy"),        // 0x7C6D - 0x7C70  92/77 - 92/80
-		ARIB_STR("n)"),         ARIB_STR("(or"),        ARIB_STR("g)"),         ARIB_STR("(pe"),        // 0x7C71 - 0x7C74  92/81 - 92/84
-		ARIB_STR("r)"),         ARIB_STR("\U0001f12c"), ARIB_STR("\U0001f12b"), ARIB_STR("\u3247"),     // 0x7C75 - 0x7C78  92/85 - 92/88
-		ARIB_STR("\U0001f190"), ARIB_STR("\U0001f226"), ARIB_STR("\u213b"),                             // 0x7C79 - 0x7C7B  92/89 - 92/91
-	};
-
-	static const InternalChar * const SymbolsTable_93[] = {
-		ARIB_STR("(月)"),       ARIB_STR("(火)"),       ARIB_STR("(水)"),       ARIB_STR("(木)"),       // 0x7D21 - 0x7D24  93/01 - 93/04
-		ARIB_STR("(金)"),       ARIB_STR("(土)"),       ARIB_STR("(日)"),       ARIB_STR("(祝)"),       // 0x7D25 - 0x7D28  93/05 - 93/08
-		ARIB_STR("㍾"),         ARIB_STR("㍽"),         ARIB_STR("㍼"),         ARIB_STR("㍻"),         // 0x7D29 - 0x7D2C  93/09 - 93/12
-		ARIB_STR("№"),         ARIB_STR("℡"),         ARIB_STR("(〒)"),       ARIB_STR("○"),         // 0x7D2D - 0x7D30  93/13 - 93/16
-		ARIB_STR("〔本〕"),     ARIB_STR("〔三〕"),     ARIB_STR("〔二〕"),     ARIB_STR("〔安〕"),     // 0x7D31 - 0x7D34  93/17 - 93/20
-		ARIB_STR("〔点〕"),     ARIB_STR("〔打〕"),     ARIB_STR("〔盗〕"),     ARIB_STR("〔勝〕"),     // 0x7D35 - 0x7D38  93/21 - 93/24
-		ARIB_STR("〔敗〕"),     ARIB_STR("〔Ｓ〕"),     ARIB_STR("［投］"),     ARIB_STR("［捕］"),     // 0x7D39 - 0x7D3C  93/25 - 93/28
-		ARIB_STR("［一］"),     ARIB_STR("［二］"),     ARIB_STR("［三］"),     ARIB_STR("［遊］"),     // 0x7D3D - 0x7D40  93/29 - 93/32
-		ARIB_STR("［左］"),     ARIB_STR("［中］"),     ARIB_STR("［右］"),     ARIB_STR("［指］"),     // 0x7D41 - 0x7D44  93/33 - 93/46
-		ARIB_STR("［走］"),     ARIB_STR("［打］"),     ARIB_STR("㍑"),         ARIB_STR("㎏"),         // 0x7D45 - 0x7D48  93/37 - 93/40
-		ARIB_STR("Hz"),         ARIB_STR("ha"),         ARIB_STR("km"),         ARIB_STR("平方km"),     // 0x7D49 - 0x7D4C  93/41 - 93/44
-		ARIB_STR("hPa"),        nullptr,                nullptr,                ARIB_STR("1/2"),        // 0x7D4D - 0x7D50  93/45 - 93/48
-		ARIB_STR("0/3"),        ARIB_STR("1/3"),        ARIB_STR("2/3"),        ARIB_STR("1/4"),        // 0x7D51 - 0x7D54  93/49 - 93/52
-		ARIB_STR("3/4"),        ARIB_STR("1/5"),        ARIB_STR("2/5"),        ARIB_STR("3/5"),        // 0x7D55 - 0x7D58  93/53 - 93/56
-		ARIB_STR("4/5"),        ARIB_STR("1/6"),        ARIB_STR("5/6"),        ARIB_STR("1/7"),        // 0x7D59 - 0x7D5C  93/57 - 93/60
-		ARIB_STR("1/8"),        ARIB_STR("1/9"),        ARIB_STR("1/10"),       ARIB_STR("晴れ"),       // 0x7D5D - 0x7D60  93/61 - 93/64
-		ARIB_STR("曇り"),       ARIB_STR("雨"),         ARIB_STR("雪"),         ARIB_STR("△"),         // 0x7D61 - 0x7D64  93/65 - 93/68
-		ARIB_STR("▲"),         ARIB_STR("▽"),         ARIB_STR("▼"),         ARIB_STR("◆"),         // 0x7D65 - 0x7D68  93/69 - 93/72
-		ARIB_STR("・"),         ARIB_STR("・"),         ARIB_STR("・"),         ARIB_STR("◇"),         // 0x7D69 - 0x7D6C  93/73 - 93/76
-		ARIB_STR("◎"),         ARIB_STR("!!"),         ARIB_STR("!?"),         ARIB_STR("曇/晴"),      // 0x7D6D - 0x7D70  93/77 - 93/80
-		ARIB_STR("雨"),         ARIB_STR("雨"),         ARIB_STR("雪"),         ARIB_STR("大雪"),       // 0x7D71 - 0x7D74  93/81 - 93/84
-		ARIB_STR("雷"),         ARIB_STR("雷雨"),       ARIB_STR("　"),         ARIB_STR("・"),         // 0x7D75 - 0x7D78  93/85 - 93/88
-		ARIB_STR("・"),         ARIB_STR("♪"),         ARIB_STR("℡"),                                 // 0x7D79 - 0x7D7B  93/89 - 93/91
-	};
-	static const InternalChar * const SymbolsTable_93_U[] = {
-		ARIB_STR("\u322a"),     ARIB_STR("\u322b"),     ARIB_STR("\u322c"),     ARIB_STR("\u322d"),     // 0x7D21 - 0x7D24  93/01 - 93/04
-		ARIB_STR("\u322e"),     ARIB_STR("\u322f"),     ARIB_STR("\u3230"),     ARIB_STR("\u3237"),     // 0x7D25 - 0x7D28  93/05 - 93/08
-		ARIB_STR("㍾"),         ARIB_STR("㍽"),         ARIB_STR("㍼"),         ARIB_STR("㍻"),         // 0x7D29 - 0x7D2C  93/09 - 93/12
-		ARIB_STR("№"),         ARIB_STR("℡"),         ARIB_STR("\u3036"),     ARIB_STR("\u26be"),     // 0x7D2D - 0x7D30  93/13 - 93/16
-		ARIB_STR("\U0001f240"), ARIB_STR("\U0001f241"), ARIB_STR("\U0001f242"), ARIB_STR("\U0001f243"), // 0x7D31 - 0x7D34  93/17 - 93/20
-		ARIB_STR("\U0001f244"), ARIB_STR("\U0001f245"), ARIB_STR("\U0001f246"), ARIB_STR("\U0001f247"), // 0x7D35 - 0x7D38  93/21 - 93/24
-		ARIB_STR("\U0001f248"), ARIB_STR("\U0001f12a"), ARIB_STR("\U0001f227"), ARIB_STR("\U0001f228"), // 0x7D39 - 0x7D3C  93/25 - 93/28
-		ARIB_STR("\U0001f229"), ARIB_STR("\U0001f214"), ARIB_STR("\U0001f22a"), ARIB_STR("\U0001f22b"), // 0x7D3D - 0x7D40  93/29 - 93/32
-		ARIB_STR("\U0001f22c"), ARIB_STR("\U0001f22d"), ARIB_STR("\U0001f22e"), ARIB_STR("\U0001f22f"), // 0x7D41 - 0x7D44  93/33 - 93/36
-		ARIB_STR("\U0001f230"), ARIB_STR("\U0001f231"), ARIB_STR("\u2113"),     ARIB_STR("㎏"),         // 0x7D45 - 0x7D48  93/37 - 93/40
-		ARIB_STR("\u3390"),     ARIB_STR("\u33ca"),     ARIB_STR("\u339e"),     ARIB_STR("\u33a2"),     // 0x7D49 - 0x7D4C  93/41 - 93/44
-		ARIB_STR("\u3371"),     nullptr,                nullptr,                ARIB_STR("\u00bd"),     // 0x7D4D - 0x7D50  93/45 - 93/48
-		ARIB_STR("\u2189"),     ARIB_STR("\u2153"),     ARIB_STR("\u2154"),     ARIB_STR("\u00bc"),     // 0x7D51 - 0x7D54  93/49 - 93/52
-		ARIB_STR("\u00be"),     ARIB_STR("\u2155"),     ARIB_STR("\u2156"),     ARIB_STR("\u2157"),     // 0x7D55 - 0x7D58  93/53 - 93/56
-		ARIB_STR("\u2158"),     ARIB_STR("\u2159"),     ARIB_STR("\u215a"),     ARIB_STR("\u2150"),     // 0x7D59 - 0x7D5C  93/57 - 93/60
-		ARIB_STR("\u215b"),     ARIB_STR("\u2151"),     ARIB_STR("\u2152"),     ARIB_STR("\u2600"),     // 0x7D5D - 0x7D60  93/61 - 93/64
-		ARIB_STR("\u2601"),     ARIB_STR("\u2602"),     ARIB_STR("\u26c4"),     ARIB_STR("\u2616"),     // 0x7D61 - 0x7D64  93/65 - 93/68
-		ARIB_STR("\u2617"),     ARIB_STR("\u26c9"),     ARIB_STR("\u26ca"),     ARIB_STR("\u2666"),     // 0x7D65 - 0x7D68  93/69 - 93/72
-		ARIB_STR("\u2665"),     ARIB_STR("\u2663"),     ARIB_STR("\u2660"),     ARIB_STR("\u26cb"),     // 0x7D69 - 0x7D6C  93/73 - 93/76
-		ARIB_STR("\u2a00"),     ARIB_STR("\u203c"),     ARIB_STR("\u2049"),     ARIB_STR("\u26c5"),     // 0x7D6D - 0x7D70  93/77 - 93/80
-		ARIB_STR("\u2614"),     ARIB_STR("\u26c6"),     ARIB_STR("\u2603"),     ARIB_STR("\u26c7"),     // 0x7D71 - 0x7D74  93/81 - 93/84
-		ARIB_STR("\u26a1"),     ARIB_STR("\u26c8"),     ARIB_STR("　"),         ARIB_STR("\u269e"),     // 0x7D75 - 0x7D78  93/85 - 93/88
-		ARIB_STR("\u269f"),     ARIB_STR("\u266c"),     ARIB_STR("\u260e"),                             // 0x7D79 - 0x7D7B  93/89 - 93/91
-	};
-
-	static const InternalChar * const SymbolsTable_94[] = {
-		ARIB_STR("Ⅰ"),         ARIB_STR("Ⅱ"),         ARIB_STR("Ⅲ"),         ARIB_STR("Ⅳ"),         // 0x7E21 - 0x7E24  94/01 - 94/04
-		ARIB_STR("Ⅴ"),         ARIB_STR("Ⅵ"),         ARIB_STR("Ⅶ"),         ARIB_STR("Ⅷ"),         // 0x7E25 - 0x7E28  94/05 - 94/08
-		ARIB_STR("Ⅸ"),         ARIB_STR("Ⅹ"),         ARIB_STR("XI"),         ARIB_STR("XⅡ"),        // 0x7E29 - 0x7E2C  94/09 - 94/12
-		ARIB_STR("⑰"),         ARIB_STR("⑱"),         ARIB_STR("⑲"),         ARIB_STR("⑳"),         // 0x7E2D - 0x7E30  94/13 - 94/16
-		ARIB_STR("(1)"),        ARIB_STR("(2)"),        ARIB_STR("(3)"),        ARIB_STR("(4)"),        // 0x7E31 - 0x7E34  94/17 - 94/20
-		ARIB_STR("(5)"),        ARIB_STR("(6)"),        ARIB_STR("(7)"),        ARIB_STR("(8)"),        // 0x7E35 - 0x7E38  94/21 - 94/24
-		ARIB_STR("(9)"),        ARIB_STR("(10)"),       ARIB_STR("(11)"),       ARIB_STR("(12)"),       // 0x7E39 - 0x7E3C  94/25 - 94/28
-		ARIB_STR("(21)"),       ARIB_STR("(22)"),       ARIB_STR("(23)"),       ARIB_STR("(24)"),       // 0x7E3D - 0x7E40  94/29 - 94/32
-		ARIB_STR("(A)"),        ARIB_STR("(B)"),        ARIB_STR("(C)"),        ARIB_STR("(D)"),        // 0x7E41 - 0x7E44  94/33 - 94/36
-		ARIB_STR("(E)"),        ARIB_STR("(F)"),        ARIB_STR("(G)"),        ARIB_STR("(H)"),        // 0x7E45 - 0x7E48  94/37 - 94/40
-		ARIB_STR("(I)"),        ARIB_STR("(J)"),        ARIB_STR("(K)"),        ARIB_STR("(L)"),        // 0x7E49 - 0x7E4C  94/41 - 94/44
-		ARIB_STR("(M)"),        ARIB_STR("(N)"),        ARIB_STR("(O)"),        ARIB_STR("(P)"),        // 0x7E4D - 0x7E50  94/45 - 94/48
-		ARIB_STR("(Q)"),        ARIB_STR("(R)"),        ARIB_STR("(S)"),        ARIB_STR("(T)"),        // 0x7E51 - 0x7E54  94/49 - 94/52
-		ARIB_STR("(U)"),        ARIB_STR("(V)"),        ARIB_STR("(W)"),        ARIB_STR("(X)"),        // 0x7E55 - 0x7E58  94/53 - 94/56
-		ARIB_STR("(Y)"),        ARIB_STR("(Z)"),        ARIB_STR("(25)"),       ARIB_STR("(26)"),       // 0x7E59 - 0x7E5C  94/57 - 94/60
-		ARIB_STR("(27)"),       ARIB_STR("(28)"),       ARIB_STR("(29)"),       ARIB_STR("(30)"),       // 0x7E5D - 0x7E60  94/61 - 94/64
-		ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E61 - 0x7E64  94/65 - 94/68
-		ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E65 - 0x7E68  94/69 - 94/72
-		ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E69 - 0x7E6C  94/73 - 94/76
-		ARIB_STR("⑬"),         ARIB_STR("⑭"),         ARIB_STR("⑮"),         ARIB_STR("⑯"),         // 0x7E6D - 0x7E70  94/77 - 94/80
-		ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E71 - 0x7E74  94/81 - 94/84
-		ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E75 - 0x7E78  94/85 - 94/88
-		ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E79 - 0x7E7C  94/89 - 94/92
-		ARIB_STR("(31)"),                                                                               // 0x7E7D - 0x7E7D  94/93 - 94/93
-	};
-	static const InternalChar * const SymbolsTable_94_U[] = {
-		ARIB_STR("Ⅰ"),         ARIB_STR("Ⅱ"),         ARIB_STR("Ⅲ"),         ARIB_STR("Ⅳ"),         // 0x7E21 - 0x7E24  94/01 - 94/04
-		ARIB_STR("Ⅴ"),         ARIB_STR("Ⅵ"),         ARIB_STR("Ⅶ"),         ARIB_STR("Ⅷ"),         // 0x7E25 - 0x7E28  94/05 - 94/08
-		ARIB_STR("Ⅸ"),         ARIB_STR("Ⅹ"),         ARIB_STR("\u216a"),     ARIB_STR("\u216b"),     // 0x7E29 - 0x7E2C  94/09 - 94/12
-		ARIB_STR("⑰"),         ARIB_STR("⑱"),         ARIB_STR("⑲"),         ARIB_STR("⑳"),         // 0x7E2D - 0x7E30  94/13 - 94/16
-		ARIB_STR("\u2474"),     ARIB_STR("\u2475"),     ARIB_STR("\u2476"),     ARIB_STR("\u2477"),     // 0x7E31 - 0x7E34  94/17 - 94/20
-		ARIB_STR("\u2478"),     ARIB_STR("\u2479"),     ARIB_STR("\u247a"),     ARIB_STR("\u247b"),     // 0x7E35 - 0x7E38  94/21 - 94/24
-		ARIB_STR("\u247c"),     ARIB_STR("\u247d"),     ARIB_STR("\u247e"),     ARIB_STR("\u247f"),     // 0x7E39 - 0x7E3C  94/25 - 94/28
-		ARIB_STR("\u3251"),     ARIB_STR("\u3252"),     ARIB_STR("\u3253"),     ARIB_STR("\u3254"),     // 0x7E3D - 0x7E40  94/29 - 94/32
-		ARIB_STR("\U0001f110"), ARIB_STR("\U0001f111"), ARIB_STR("\U0001f112"), ARIB_STR("\U0001f113"), // 0x7E41 - 0x7E44  94/33 - 94/36
-		ARIB_STR("\U0001f114"), ARIB_STR("\U0001f115"), ARIB_STR("\U0001f116"), ARIB_STR("\U0001f117"), // 0x7E45 - 0x7E48  94/37 - 94/40
-		ARIB_STR("\U0001f118"), ARIB_STR("\U0001f119"), ARIB_STR("\U0001f11a"), ARIB_STR("\U0001f11b"), // 0x7E49 - 0x7E4C  94/41 - 94/44
-		ARIB_STR("\U0001f11c"), ARIB_STR("\U0001f11d"), ARIB_STR("\U0001f11e"), ARIB_STR("\U0001f11f"), // 0x7E4D - 0x7E50  94/45 - 94/48
-		ARIB_STR("\U0001f120"), ARIB_STR("\U0001f121"), ARIB_STR("\U0001f122"), ARIB_STR("\U0001f123"), // 0x7E51 - 0x7E54  94/49 - 94/52
-		ARIB_STR("\U0001f124"), ARIB_STR("\U0001f125"), ARIB_STR("\U0001f126"), ARIB_STR("\U0001f127"), // 0x7E55 - 0x7E58  94/53 - 94/56
-		ARIB_STR("\U0001f128"), ARIB_STR("\U0001f129"), ARIB_STR("\u3255"),     ARIB_STR("\u3256"),     // 0x7E59 - 0x7E5C  94/57 - 94/60
-		ARIB_STR("\u3257"),     ARIB_STR("\u3258"),     ARIB_STR("\u3259"),     ARIB_STR("\u325a"),     // 0x7E5D - 0x7E60  94/61 - 94/64
-		ARIB_STR("①"),         ARIB_STR("②"),         ARIB_STR("③"),         ARIB_STR("④"),         // 0x7E61 - 0x7E64  94/65 - 94/68
-		ARIB_STR("⑤"),         ARIB_STR("⑥"),         ARIB_STR("⑦"),         ARIB_STR("⑧"),         // 0x7E65 - 0x7E68  94/69 - 94/72
-		ARIB_STR("⑨"),         ARIB_STR("⑩"),         ARIB_STR("⑪"),         ARIB_STR("⑫"),         // 0x7E69 - 0x7E6C  94/73 - 94/76
-		ARIB_STR("⑬"),         ARIB_STR("⑭"),         ARIB_STR("⑮"),         ARIB_STR("⑯"),         // 0x7E6D - 0x7E70  94/77 - 94/80
-		ARIB_STR("\u2776"),     ARIB_STR("\u2777"),     ARIB_STR("\u2778"),     ARIB_STR("\u2779"),     // 0x7E71 - 0x7E74  94/81 - 94/84
-		ARIB_STR("\u277a"),     ARIB_STR("\u277b"),     ARIB_STR("\u277c"),     ARIB_STR("\u277d"),     // 0x7E75 - 0x7E78  94/85 - 94/88
-		ARIB_STR("\u277e"),     ARIB_STR("\u277f"),     ARIB_STR("\u24eb"),     ARIB_STR("\u24ec"),     // 0x7E79 - 0x7E7C  94/89 - 94/92
-		ARIB_STR("\u325b"),                                                                             // 0x7E7D - 0x7E7D  94/93 - 94/93
 	};
 
 	static const InternalChar * const KanjiTable1[] = {
@@ -1022,6 +1028,93 @@ void ARIBStringDecoder::PutSymbolsChar(uint16_t Code, InternalString *pDstString
 		*pDstString += pSrc;
 	else
 		*pDstString += TOFU_STR;
+}
+
+
+const ARIBStringDecoder::InternalChar * ARIBStringDecoder::GetSymbolAlternativeText(char32_t Code)
+{
+	struct SymbolText {
+		char32_t Code;
+		const InternalChar *pText;
+	};
+
+	// 符号位置順の逆引き表。同じ符号位置が複数の区にある場合 (U+1F214 の 90 区と 93 区) は先の区を採る
+	static const std::vector<SymbolText> Table = [] {
+		static const struct {
+			const InternalChar * const *pTable;
+			const InternalChar * const *pTableU;
+			size_t Count;
+		} Tables[] = {
+			{SymbolsTable_90_45, SymbolsTable_90_45_U, std::size(SymbolsTable_90_45)},
+			{SymbolsTable_92,    SymbolsTable_92_U,    std::size(SymbolsTable_92)},
+			{SymbolsTable_93,    SymbolsTable_93_U,    std::size(SymbolsTable_93)},
+			{SymbolsTable_94,    SymbolsTable_94_U,    std::size(SymbolsTable_94)},
+		};
+		static_assert(std::size(SymbolsTable_90_45) == std::size(SymbolsTable_90_45_U));
+		static_assert(std::size(SymbolsTable_92) == std::size(SymbolsTable_92_U));
+		static_assert(std::size(SymbolsTable_93) == std::size(SymbolsTable_93_U));
+		static_assert(std::size(SymbolsTable_94) == std::size(SymbolsTable_94_U));
+
+		std::vector<SymbolText> List;
+
+		for (auto &Tables2 : Tables) {
+			for (size_t i = 0; i < Tables2.Count; i++) {
+				const InternalChar *pText = Tables2.pTable[i];
+				const InternalChar *pTextU = Tables2.pTableU[i];
+				if ((pText == nullptr) || (pTextU == nullptr))
+					continue;
+
+				if (StringCompare(pText, pTextU) == 0)
+					continue;
+
+				// Unicode 版は 1 符号位置
+				char32_t CodeU;
+#ifdef LIBISDB_ARIB_STR_IS_WCHAR
+				if ((pTextU[0] >= 0xD800) && (pTextU[0] < 0xDC00)) {
+					if ((pTextU[1] < 0xDC00) || (pTextU[1] >= 0xE000) || (pTextU[2] != 0))
+						continue;
+					CodeU = 0x10000 + ((static_cast<char32_t>(pTextU[0] & 0x03FF) << 10) | (pTextU[1] & 0x03FF));
+				} else {
+					if (pTextU[1] != 0)
+						continue;
+					CodeU = pTextU[0];
+				}
+#else
+				uint32_t CodePoint;
+				const size_t Length = UTF8ToCodePoint(
+					reinterpret_cast<const uint8_t *>(pTextU), std::char_traits<InternalChar>::length(pTextU), &CodePoint);
+				if ((CodePoint == 0) || (pTextU[Length] != 0))
+					continue;
+				CodeU = CodePoint;
+#endif
+
+				bool Found = false;
+				for (const SymbolText &Entry : List) {
+					if (Entry.Code == CodeU) {
+						Found = true;
+						break;
+					}
+				}
+				if (!Found)
+					List.push_back({CodeU, pText});
+			}
+		}
+
+		std::sort(
+			List.begin(), List.end(),
+			[](const SymbolText &Entry1, const SymbolText &Entry2) { return Entry1.Code < Entry2.Code; });
+
+		return List;
+	}();
+
+	auto it = std::lower_bound(
+		Table.begin(), Table.end(), Code,
+		[](const SymbolText &Entry, char32_t Code) { return Entry.Code < Code; });
+
+	if ((it != Table.end()) && (it->Code == Code))
+		return it->pText;
+
+	return nullptr;
 }
 
 

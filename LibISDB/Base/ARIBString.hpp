@@ -121,6 +121,8 @@ namespace LibISDB
 			OptionalReturnArg<FormatList> FormatList = std::nullopt,
 			DRCSMap *pDRCSMap = nullptr);
 
+		static const InternalChar * GetSymbolAlternativeText(char32_t Code);
+
 	private:
 		/** 符号集合 */
 		enum class CodeSet {
