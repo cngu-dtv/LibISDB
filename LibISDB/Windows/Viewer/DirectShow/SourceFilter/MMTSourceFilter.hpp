@@ -82,6 +82,8 @@ namespace LibISDB::DirectShow
 		 映像は時刻の分かるランダムアクセスポイントから出力する。
 		*/
 		bool InputAccessUnit(PinType Type, const MPUAssembler::AccessUnitInfo &Info, int64_t NTPTime);
+		// NTP の時刻がうるう秒の調整で Seconds 秒ずれた (以降の NTP の時刻と PTS は同じだけずれる)
+		void OnLeapSecond(int Seconds);
 		void Reset();
 		void Flush();
 		void SetOutputWhenPaused(bool Output);

@@ -210,6 +210,9 @@ namespace LibISDB
 		bool IsAudioStreamPlayable(const ServiceSource *pSource, int ServiceIndex, int StreamIndex) const;
 		int GetDefaultAudioStreamIndex(const ServiceSource *pSource, int ServiceIndex) const;
 		void GetAudioComponentList(const ServiceSource *pSource, int ServiceIndex, EventInfo::AudioInfoList *pList) const;
+		// 音声の component_tag、符号化方式、サイマル、言語の条件が変わったか
+		static bool IsAudioSelectionConditionChanged(
+			const EventInfo::AudioInfoList &List1, const EventInfo::AudioInfoList &List2);
 
 		// 既定の音声の選択に使う (pInfo は MH-音声コンポーネント記述子の内容、無い場合は nullptr)
 		virtual bool IsAudioPlayable(uint8_t StreamType, const EventInfo::AudioInfo *pInfo) const { return true; }
@@ -249,7 +252,7 @@ namespace LibISDB
 		uint8_t m_CurVideoComponentTag;
 		int m_CurAudioStream;
 		uint8_t m_CurAudioComponentTag;
-		// 選択中のサービスの音声の構成 (MMT)
+		// 選択中のサービスの音声の構成 (MMT、利用者の選択を既定に戻す判定に使う)
 		EventInfo::AudioInfoList m_AudioComponentList;
 		uint16_t m_CurEventID;
 

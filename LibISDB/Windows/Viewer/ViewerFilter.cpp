@@ -2369,4 +2369,11 @@ void ViewerFilter::OnAccessUnit(
 }
 
 
+void ViewerFilter::OnNTPLeapSecond(const MMTMediaReceiver *pReceiver, int Seconds)
+{
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->OnLeapSecond(Seconds);
+}
+
+
 } // namespace LibISDB

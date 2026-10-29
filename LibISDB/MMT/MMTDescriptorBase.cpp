@@ -97,6 +97,9 @@ void MMTDescriptorBase::Reset() noexcept
 
 size_t MMTDescriptorBase::GetLengthFieldSize(uint16_t Tag) noexcept
 {
+	// 依存記述子 (ARIB STD-B60 表 7-32)
+	if (Tag == 0x0002)
+		return 2;
 	if ((Tag >= 0x4000) && (Tag <= 0x6FFF))
 		return 2;
 	if ((Tag >= 0x7000) && (Tag <= 0x7FFF))

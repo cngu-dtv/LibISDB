@@ -461,10 +461,10 @@ namespace
 		return Packet;
 	}
 
-	ByteArray MakeNTP(std::uint64_t Timestamp)
+	ByteArray MakeNTP(std::uint64_t Timestamp, std::uint8_t LeapIndicator = 0)
 	{
 		ByteArray Packet(40, 0);
-		Packet[0] = 0x25; // LI 0, version 4, mode 5
+		Packet[0] = static_cast<std::uint8_t>((LeapIndicator << 6) | 0x25); // version 4, mode 5
 		Append32(Packet, static_cast<std::uint32_t>(Timestamp >> 32));
 		Append32(Packet, static_cast<std::uint32_t>(Timestamp));
 		return Packet;
@@ -1423,6 +1423,9 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 
 	SECTION("LengthField") {
 		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x0001) == 1);
+		// 依存記述子 (ARIB STD-B60 表 7-32)
+		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x0002) == 2);
+		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x0003) == 1);
 		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x4000) == 2);
 		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x7000) == 4);
 		CHECK(MMTDescriptorBase::GetLengthFieldSize(0x8019) == 1);
@@ -1430,7 +1433,9 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 	}
 
 	SECTION("Block") {
-		ByteArray Data = MakeMMTDescriptor(0x8011, HexBytes("0010"));
+		// 依存記述子は長さが 16 ビット
+		ByteArray Data = HexBytes("0002000101");
+		Append(Data, MakeMMTDescriptor(0x8011, HexBytes("0010")));
 		Append(Data, MakeMMTDescriptor(0x4000, ByteArray(300, 0x11)));
 		Append(Data, MakeMMTDescriptor(0x7000, ByteArray(20, 0x22)));
 		// 内容が不正な記述子は読み飛ばす
@@ -1440,10 +1445,12 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 		Append(Data, HexBytes("801105"));
 
 		MMTDescriptorBlock Block;
-		CHECK(Block.ParseBlock(Data.data(), Data.size()) == 4);
-		CHECK(Block.GetDescriptorByIndex(1)->GetTag() == 0x4000);
-		CHECK(Block.GetDescriptorByIndex(1)->GetLength() == 300);
-		CHECK(Block.GetDescriptorByIndex(2)->GetSize() == 26);
+		CHECK(Block.ParseBlock(Data.data(), Data.size()) == 5);
+		CHECK(Block.GetDescriptorByIndex(0)->GetTag() == 0x0002);
+		CHECK(Block.GetDescriptorByIndex(0)->GetSize() == 5);
+		CHECK(Block.GetDescriptorByIndex(2)->GetTag() == 0x4000);
+		CHECK(Block.GetDescriptorByIndex(2)->GetLength() == 300);
+		CHECK(Block.GetDescriptorByIndex(3)->GetSize() == 26);
 		CHECK(Block.GetDescriptor<MHServiceDescriptor>() == nullptr);
 
 		const MHStreamIdentifierDescriptor *pStreamID = Block.GetDescriptor<MHStreamIdentifierDescriptor>();
@@ -1461,7 +1468,7 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 		CHECK(pVideo->GetLanguageCode() == LANGUAGE_CODE_JPN);
 
 		MMTDescriptorBlock Copy(Block);
-		REQUIRE(Copy.GetDescriptorCount() == 4);
+		REQUIRE(Copy.GetDescriptorCount() == 5);
 		CHECK(Copy.GetDescriptor<VideoComponentDescriptor>() != pVideo);
 		CHECK(Copy.GetDescriptor<VideoComponentDescriptor>()->GetVideoFrameRate() == 8);
 	}
@@ -2133,13 +2140,14 @@ namespace
 	}
 
 	// timescale 90000 / default_pts_offset 1500 / mpu_decoding_time_offset 3000
-	ByteArray MakeMPUExtendedTimestampDescriptor(std::uint32_t MPUSequenceNumber, const std::vector<std::uint16_t> &DTSPTSOffsets)
+	ByteArray MakeMPUExtendedTimestampDescriptor(
+		std::uint32_t MPUSequenceNumber, const std::vector<std::uint16_t> &DTSPTSOffsets, std::uint8_t LeapIndicator = 0)
 	{
 		ByteArray Body {0xFB};
 		Append32(Body, 90000);
 		Append16(Body, 1500);
 		Append32(Body, MPUSequenceNumber);
-		Body.push_back(0x3F);
+		Body.push_back(static_cast<std::uint8_t>((LeapIndicator << 6) | 0x3F));
 		Append16(Body, 3000);
 		Body.push_back(static_cast<std::uint8_t>(DTSPTSOffsets.size()));
 		for (std::uint16_t Offset : DTSPTSOffsets)
@@ -2342,6 +2350,33 @@ TEST_CASE("MPUTimestamp", "[mmt][mpu]")
 	CHECK(Table.GetMPUCount() == 1);
 	CHECK_FALSE(Table.GetPresentationTime(1005, &PresentationTime));
 	CHECK(Table.GetPresentationTime(0, &PresentationTime));
+
+	// うるう秒 (ARIB TR-B39 第1部 第7編 付録 1): 提示時刻は 23:59:59.5 UTC (8:59:59.5 JST)
+	const std::int64_t DaySeconds = 24 * 60 * 60;
+	const std::uint64_t LeapSeconds = (static_cast<std::uint64_t>(TEST_NTP_SECONDS) / DaySeconds + 1) * DaySeconds - 1;
+	const std::uint64_t LeapTime = (LeapSeconds << 32) | 0x80000000;
+	const std::int64_t LeapBase = static_cast<std::int64_t>(LeapSeconds) * 90000 + 45000;
+	const std::int64_t Boundary = LeapBase + 45000;
+	std::vector<std::uint16_t> Offsets(40, 1500);
+
+	for (std::uint8_t Leap = 0; Leap <= 3; Leap++) {
+		ByteArray LeapDesc = MakeMPUTimestampDescriptor(2000, LeapTime);
+		Append(LeapDesc, MakeMPUExtendedTimestampDescriptor(2000, Offsets, Leap));
+		MMTDescriptorBlock LeapBlock;
+		LeapBlock.ParseBlock(LeapDesc.data(), LeapDesc.size());
+		MPUTimestampTable LeapTable;
+		LeapTable.Update(&LeapBlock);
+
+		// DTS = 境界 - 48000 + 1500 * n、PTS = DTS + 1500
+		REQUIRE(LeapTable.GetAccessUnitTime(2000, 0, &DTS, &PTS));
+		CHECK(DTS == LeapBase - 3000 + ((Leap == 2) ? 90000 : 0));
+		REQUIRE(LeapTable.GetAccessUnitTime(2000, 31, &DTS, &PTS));
+		// 挿入では 0:00:00 UTC 以後の時刻から 1 秒引く、削除では 23:59:59 UTC 以後の時刻に 1 秒足す
+		CHECK(DTS == Boundary - 1500 + ((Leap == 2) ? 90000 : 0));
+		CHECK(PTS == Boundary + ((Leap == 1) ? -90000 : (Leap == 2) ? 90000 : 0));
+		REQUIRE(LeapTable.GetAccessUnitTime(2000, 32, &DTS, &PTS));
+		CHECK(DTS == Boundary + ((Leap == 1) ? -90000 : (Leap == 2) ? 90000 : 0));
+	}
 }
 
 TEST_CASE("MPUAssembler", "[mmt][mpu]")
@@ -2430,6 +2465,21 @@ TEST_CASE("MPUAssembler", "[mmt][mpu]")
 			CHECK_FALSE(Recorder.AccessUnits[1].HasTimestamp);
 			CHECK(Assembler.GetStatistics().LossCount == 1);
 			CHECK(Assembler.GetStatistics().DroppedCount == 1);
+
+			// 欠落の直後でも、先頭 (RAP_flag) から届いた MPU の順番は分かる
+			ByteArray Descriptors11 = MakeMPUTimestampDescriptor(11, Time + (1ULL << 32));
+			Append(Descriptors11, MakeMPUExtendedTimestampDescriptor(11, {4500, 1500}));
+			MMTDescriptorBlock Block11;
+			Block11.ParseBlock(Descriptors11.data(), Descriptors11.size());
+			Assembler.UpdateTimestamps(&Block11);
+			StoreMPU(Assembler, MakeMPUTLV(0x0100, Sequence++, false,
+				MakeMPUPayload(0, 11, {MakeNALUnitMFU(AUD)})));
+			REQUIRE(Recorder.AccessUnits.size() == 3);
+			CHECK(Recorder.AccessUnits[2].MPUSequenceNumber == 11);
+			CHECK(Recorder.AccessUnits[2].Index == 0);
+			CHECK_FALSE(Recorder.AccessUnits[2].Discontinuity);
+			REQUIRE(Recorder.AccessUnits[2].HasTimestamp);
+			CHECK(Recorder.AccessUnits[2].DTS == Base + 90000 - 3000);
 		}
 
 		SECTION("Scrambled") {
@@ -3148,6 +3198,7 @@ namespace
 		};
 
 		std::vector<AccessUnit> AccessUnits;
+		std::vector<int> LeapSeconds;
 
 		void OnAccessUnit(
 			const LibISDB::MMTMediaReceiver *pReceiver, LibISDB::MMTMediaReceiver::MediaType Type,
@@ -3156,6 +3207,11 @@ namespace
 			AccessUnits.push_back({
 				Type, Info.PacketID, Info.HasTimestamp, Info.PTS, Info.RandomAccess,
 				pReceiver->GetNTPTime90kHz(), ByteArray(Info.pData, Info.pData + Info.DataSize)});
+		}
+
+		void OnNTPLeapSecond(const LibISDB::MMTMediaReceiver *pReceiver, int Seconds) override
+		{
+			LeapSeconds.push_back(Seconds);
 		}
 	};
 
@@ -3290,6 +3346,37 @@ TEST_CASE("MMTMediaReceiver", "[mmt][viewer]")
 		InputFilter(*pParser, Far.Media, 4096);
 		REQUIRE(Recorder.AccessUnits.size() == 1);
 		CHECK_FALSE(Recorder.AccessUnits[0].HasTimestamp);
+	}
+
+	SECTION("LeapSecond") {
+		// 23:59:59 UTC (8:59:59 JST) の繰り返しと飛びを NTP の leap_indicator と合わせて検出する
+		const std::uint64_t DaySeconds = 24 * 60 * 60;
+		const std::uint64_t LastSecond = (static_cast<std::uint64_t>(TEST_NTP_SECONDS) / DaySeconds + 1) * DaySeconds - 1;
+		const auto InputNTP =
+			[&](std::uint64_t Seconds, std::uint32_t Fraction, std::uint8_t LeapIndicator) {
+				InputFilter(*pParser, Concat({
+					MakeTLV(0x02, MakeIPv6UDP(456, 123, MakeNTP((Seconds << 32) | Fraction, LeapIndicator))),
+					MakeTLV(0xFF, ByteArray(16, 0xFF))}), 4096);
+			};
+
+		// 挿入: 23:59:59.97 -> 23:59:59.00
+		InputNTP(LastSecond, 0xF7000000, 1);
+		InputNTP(LastSecond, 0x00000000, 1);
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1});
+		// 削除: 23:59:58.97 -> 0:00:00.00
+		InputNTP(LastSecond - 1, 0xF7000000, 2);
+		InputNTP(LastSecond + 1, 0x00000000, 2);
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1});
+		// leap_indicator が無ければ時刻の飛びは調整ではない
+		InputNTP(LastSecond, 0xF7000000, 0);
+		InputNTP(LastSecond, 0x00000000, 0);
+		InputNTP(LastSecond - 1, 0xF7000000, 0);
+		InputNTP(LastSecond + 1, 0x00000000, 0);
+		// 日の境界でない繰り返しは調整ではない
+		InputNTP(LastSecond - 10, 0xF7000000, 1);
+		InputNTP(LastSecond - 10, 0x00000000, 1);
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1});
+		CHECK(Receiver.GetNTPTime() == ((LastSecond - 10) << 32));
 	}
 
 	SECTION("Reset") {
@@ -3576,6 +3663,38 @@ TEST_CASE("TSEngineMMTAudioSelection", "[mmt][engine]")
 			{0x0110, 0x0010, ALS, MODE_2CH, 0x00},
 		}), 4096);
 		CHECK(pRecorder->AudioPacketID == 0x0110);
+	}
+
+	SECTION("KeepSelection") {
+		// 音声モードだけの変化では利用者の選択を保つ (ARIB TR-B39 第1部 第2編 4.7.2 図 4-2)
+		InputFilter(*pParser, MakeAudioSelectionSignaling(1, {
+			{0x0110, 0x0010, AAC, MODE_5_1CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+			{0x0112, 0x0012, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		REQUIRE(Engine.SetAudioStream(2));
+		InputFilter(*pParser, MakeAudioSelectionSignaling(2, {
+			{0x0110, 0x0010, AAC, MODE_22_2CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+			{0x0112, 0x0012, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0112);
+
+		// 選んでいた音声が再生できなくなったら既定の音声にする
+		Engine.Play22_2ch = false;
+		InputFilter(*pParser, MakeAudioSelectionSignaling(3, {
+			{0x0110, 0x0010, AAC, MODE_5_1CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+			{0x0112, 0x0012, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0112);
+		REQUIRE(Engine.SetAudioStream(0));
+		InputFilter(*pParser, MakeAudioSelectionSignaling(4, {
+			{0x0110, 0x0010, AAC, MODE_22_2CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+			{0x0112, 0x0012, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0111);
 	}
 
 	SECTION("AudioChanged") {

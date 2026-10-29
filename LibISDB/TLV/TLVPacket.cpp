@@ -428,6 +428,7 @@ bool TLVPacket::ParseUDPPayload(size_t Pos, size_t Size)
 			return false;
 		const uint8_t *pTimestamp = &m_pData[Pos + NTP_TRANSMIT_TIMESTAMP_OFFSET];
 		m_Header.NTPTimestamp = (static_cast<uint64_t>(Load32(&pTimestamp[0])) << 32) | Load32(&pTimestamp[4]);
+		m_Header.NTPLeapIndicator = m_pData[Pos] >> 6;
 		m_Header.Kind = PayloadKind::NTP;
 		return true;
 	}

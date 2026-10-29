@@ -106,6 +106,7 @@ void MPUTimestampTable::Update(const MMTDescriptorBlock *pDescBlock, uint32_t As
 				MPUEntry &Entry = m_MPUMap[pInfo->MPUSequenceNumber];
 				Entry.HasExtendedTimestamp = true;
 				Entry.Timescale = Timescale;
+				Entry.LeapIndicator = pInfo->MPUPresentationTimeLeapIndicator;
 				Entry.DecodingTimeOffset = pInfo->MPUDecodingTimeOffset;
 				Entry.AccessUnitList = pInfo->AccessUnitList;
 				UpdateLatest(pInfo->MPUSequenceNumber);
@@ -156,12 +157,46 @@ bool MPUTimestampTable::GetAccessUnitTime(
 
 	const int64_t Base = NTPTimeTo90kHz(Entry.PresentationTime);
 
-	if (DTS)
-		*DTS = Base + TimescaleTo90kHz(Ticks, Entry.Timescale);
-	if (PTS)
-		*PTS = Base + TimescaleTo90kHz(Ticks + Entry.AccessUnitList[Index].DTSPTSOffset, Entry.Timescale);
+	if (DTS) {
+		*DTS = AdjustLeapSecond(
+			Base + TimescaleTo90kHz(Ticks, Entry.Timescale),
+			Entry.PresentationTime, Entry.LeapIndicator);
+	}
+	if (PTS) {
+		*PTS = AdjustLeapSecond(
+			Base + TimescaleTo90kHz(Ticks + Entry.AccessUnitList[Index].DTSPTSOffset, Entry.Timescale),
+			Entry.PresentationTime, Entry.LeapIndicator);
+	}
 
 	return true;
+}
+
+
+/*
+	うるう秒の調整 (ARIB TR-B39 第1部 第7編 7.12.2.4、付録 1)
+
+	MPU 拡張タイムスタンプ記述子の相対時刻はうるう秒を反映しない。
+	挿入 (leap_indicator = 1) では 9:00:00 JST 以後の時刻から 1 秒引き、
+	削除 (leap_indicator = 2) では 8:59:59 JST 以後の時刻に 1 秒足す。
+	調整日の 9:00:00 JST (0:00:00 UTC) は MPU の提示時刻の次の日の境界。
+*/
+int64_t MPUTimestampTable::AdjustLeapSecond(int64_t Time, uint64_t PresentationTime, uint8_t LeapIndicator) noexcept
+{
+	if ((LeapIndicator != 1) && (LeapIndicator != 2))
+		return Time;
+
+	constexpr int64_t SECONDS_PER_DAY = 24 * 60 * 60;
+	const int64_t Boundary = ((static_cast<int64_t>(PresentationTime >> 32) / SECONDS_PER_DAY) + 1) * SECONDS_PER_DAY * 90000;
+
+	if (LeapIndicator == 1) {
+		if (Time >= Boundary)
+			return Time - 90000;
+	} else {
+		if (Time >= Boundary - 90000)
+			return Time + 90000;
+	}
+
+	return Time;
 }
 
 
@@ -240,14 +275,12 @@ void MPUAssembler::StorePacket(const TLVPacket *pPacket)
 	m_PacketID = Header.PacketID;
 	m_Statistics.PacketCount++;
 
-	bool Lost = false;
 	if (m_HasSequenceNumber) {
 		if (Header.PacketSequenceNumber == m_NextSequenceNumber - 1)
 			return;
 		if (Header.PacketSequenceNumber != m_NextSequenceNumber) {
 			m_Statistics.LossCount++;
 			OnLoss();
-			Lost = true;
 		}
 	}
 	m_HasSequenceNumber = true;
@@ -271,7 +304,8 @@ void MPUAssembler::StorePacket(const TLVPacket *pPacket)
 
 	if (!m_HasMPU || (PayloadHeader.MPUSequenceNumber != m_MPUSequenceNumber)) {
 		// MPU の先頭のパケットは RAP_flag が 1 (ARIB TR-B39 第1部 第7編 5.6.2)
-		OnMPUChanged(PayloadHeader.MPUSequenceNumber, Header.RAPFlag && !Lost);
+		// 先頭のパケットが届いていれば、その前の欠落は新しい MPU の順番に影響しない
+		OnMPUChanged(PayloadHeader.MPUSequenceNumber, Header.RAPFlag);
 	}
 
 	if (PayloadHeader.AggregationFlag) {

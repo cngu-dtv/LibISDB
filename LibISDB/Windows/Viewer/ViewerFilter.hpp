@@ -280,6 +280,7 @@ namespace LibISDB
 		void OnAccessUnit(
 			const MMTMediaReceiver *pReceiver, MMTMediaReceiver::MediaType Type,
 			const MPUAssembler::AccessUnitInfo &Info) override;
+		void OnNTPLeapSecond(const MMTMediaReceiver *pReceiver, int Seconds) override;
 
 		bool m_IsOpen;
 

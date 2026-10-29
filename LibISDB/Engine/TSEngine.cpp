@@ -501,11 +501,14 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 		EventInfo::AudioInfoList AudioList;
 		GetAudioComponentList(pSource, CurServiceIndex, &AudioList);
 		// 選局時と、サイマル・多言語の条件が変わった時は既定の音声にする (ARIB TR-B39 第1部 第2編 4.7.2 図 4-2)
-		const bool AudioChanged = ServiceChanged || (AudioList != m_AudioComponentList);
+		const bool AudioChanged = ServiceChanged || IsAudioSelectionConditionChanged(AudioList, m_AudioComponentList);
 		m_AudioComponentList = std::move(AudioList);
 		AudioIndex = -1;
-		if (!AudioChanged && (m_CurAudioComponentTag != COMPONENT_TAG_INVALID))
+		if (!AudioChanged && (m_CurAudioComponentTag != COMPONENT_TAG_INVALID)) {
 			AudioIndex = pSource->GetAudioIndexByComponentTag(CurServiceIndex, m_CurAudioComponentTag);
+			if ((AudioIndex >= 0) && !IsAudioStreamPlayable(pSource, CurServiceIndex, AudioIndex))
+				AudioIndex = -1;
+		}
 		if (AudioIndex < 0)
 			AudioIndex = GetDefaultAudioStreamIndex(pSource, CurServiceIndex);
 	} else if (m_CurAudioComponentTag != COMPONENT_TAG_INVALID
@@ -1159,6 +1162,29 @@ int TSEngine::GetDefaultAudioStreamIndex(const ServiceSource *pSource, int Servi
 	}
 
 	return Default;
+}
+
+
+bool TSEngine::IsAudioSelectionConditionChanged(
+	const EventInfo::AudioInfoList &List1, const EventInfo::AudioInfoList &List2)
+{
+	if (List1.size() != List2.size())
+		return true;
+
+	for (size_t i = 0; i < List1.size(); i++) {
+		const EventInfo::AudioInfo &Info1 = List1[i];
+		const EventInfo::AudioInfo &Info2 = List2[i];
+
+		if ((Info1.ComponentTag != Info2.ComponentTag)
+				|| (Info1.StreamContent != Info2.StreamContent)
+				|| (Info1.SimulcastGroupTag != Info2.SimulcastGroupTag)
+				|| (Info1.ESMultiLingualFlag != Info2.ESMultiLingualFlag)
+				|| (Info1.LanguageCode != Info2.LanguageCode)
+				|| (Info1.LanguageCode2 != Info2.LanguageCode2))
+			return true;
+	}
+
+	return false;
 }
 
 

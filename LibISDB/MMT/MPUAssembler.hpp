@@ -65,9 +65,12 @@ namespace LibISDB
 			uint64_t PresentationTime = 0;
 			bool HasExtendedTimestamp = false;
 			uint32_t Timescale = 0;
+			uint8_t LeapIndicator = 0;
 			uint16_t DecodingTimeOffset = 0;
 			std::vector<MPUExtendedTimestampDescriptor::AccessUnitInfo> AccessUnitList;
 		};
+
+		static int64_t AdjustLeapSecond(int64_t Time, uint64_t PresentationTime, uint8_t LeapIndicator) noexcept;
 
 		// 最新の MPU からこれ以上離れた MPU の情報は捨てる
 		static constexpr int32_t MAX_SEQUENCE_DISTANCE = 32;

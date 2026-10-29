@@ -126,6 +126,8 @@ namespace LibISDB
 		bool IsScrambled() const noexcept { return HasMMTPHeader() && m_Header.MMTP.IsScrambled(); }
 
 		uint64_t GetNTPTransmitTimestamp() const noexcept { return m_Header.NTPTimestamp; }
+		// leap_indicator (1 = うるう秒挿入、2 = うるう秒削除、ARIB TR-B39 第1部 第7編 7.12.2.2)
+		uint8_t GetNTPLeapIndicator() const noexcept { return m_Header.NTPLeapIndicator; }
 
 		static bool IsValidPacketType(uint8_t PacketType) noexcept;
 
@@ -152,6 +154,7 @@ namespace LibISDB
 			uint32_t PayloadSize = 0;            /**< ペイロードのサイズ */
 			MMTPHeader MMTP;                     /**< MMTP ヘッダ */
 			uint64_t NTPTimestamp = 0;           /**< NTP transmit_timestamp */
+			uint8_t NTPLeapIndicator = 0;        /**< NTP leap_indicator */
 		};
 
 		HeaderInfo m_Header;

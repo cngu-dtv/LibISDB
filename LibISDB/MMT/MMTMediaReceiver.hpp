@@ -61,6 +61,8 @@ namespace LibISDB
 			// NTP の時刻から MAX_TIMESTAMP_DEVIATION 以上離れた時刻は無効 (HasTimestamp = false) にする
 			virtual void OnAccessUnit(
 				const MMTMediaReceiver *pReceiver, MediaType Type, const MPUAssembler::AccessUnitInfo &Info) {}
+			// NTP の時刻がうるう秒の調整で Seconds 秒 (-1 / +1) ずれた
+			virtual void OnNTPLeapSecond(const MMTMediaReceiver *pReceiver, int Seconds) {}
 		};
 
 		/** NTP の時刻との差の上限 (90kHz) */
@@ -92,6 +94,7 @@ namespace LibISDB
 	// MPUAssembler::Handler
 		void OnAccessUnit(const MPUAssembler *pAssembler, const MPUAssembler::AccessUnitInfo &Info) override;
 
+		void OnNTPPacket(const TLVPacket *pPacket);
 		void OnPLTTable(const MMTSingleTable *pTable);
 		void OnMPTTable(const MMTSingleTable *pTable);
 		void UpdateAssets(const MPTable *pMPTable);

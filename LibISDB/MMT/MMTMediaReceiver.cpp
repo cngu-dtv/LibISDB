@@ -72,9 +72,7 @@ void MMTMediaReceiver::StorePacketStream(DataStream *pData)
 
 	case TLVPacket::PayloadKind::NTP:
 		do {
-			const uint64_t Time = pData->Get<TLVPacket>()->GetNTPTransmitTimestamp();
-			if (Time != 0)
-				m_LastNTPTime = Time;
+			OnNTPPacket(pData->Get<TLVPacket>());
 		} while (pData->Next());
 		break;
 
@@ -115,6 +113,46 @@ void MMTMediaReceiver::SetAudioPacketID(uint16_t PacketID)
 int64_t MMTMediaReceiver::GetNTPTime90kHz() const noexcept
 {
 	return MPUTimestampTable::NTPTimeTo90kHz(m_LastNTPTime);
+}
+
+
+void MMTMediaReceiver::OnNTPPacket(const TLVPacket *pPacket)
+{
+	const uint64_t Time = pPacket->GetNTPTransmitTimestamp();
+	if (Time == 0)
+		return;
+
+	/*
+		うるう秒の調整 (ARIB TR-B39 第1部 第7編 7.12.2.2)
+		挿入では 8:59:59 JST (23:59:59 UTC) が繰り返され、削除では 8:59:59 JST が飛ぶ
+	*/
+	if (m_LastNTPTime != 0) {
+		constexpr int64_t SECONDS_PER_DAY = 24 * 60 * 60;
+		const int64_t LastSeconds = static_cast<int64_t>(m_LastNTPTime >> 32);
+		const int64_t Seconds = static_cast<int64_t>(Time >> 32);
+		const int64_t Diff =
+			MPUTimestampTable::NTPTimeTo90kHz(Time) - MPUTimestampTable::NTPTimeTo90kHz(m_LastNTPTime);
+		const uint8_t LeapIndicator = pPacket->GetNTPLeapIndicator();
+		int Step = 0;
+
+		if ((LeapIndicator == 1)
+				&& (Diff <= -90000 + 9000) && (Diff >= -90000 - 9000)
+				&& (Seconds % SECONDS_PER_DAY == SECONDS_PER_DAY - 1)) {
+			Step = -1;
+		} else if ((LeapIndicator == 2)
+				&& (Diff >= 90000) && (Diff <= 90000 + 18000)
+				&& (LastSeconds % SECONDS_PER_DAY < SECONDS_PER_DAY - 1)
+				&& (Seconds / SECONDS_PER_DAY > LastSeconds / SECONDS_PER_DAY)) {
+			Step = 1;
+		}
+
+		if ((Step != 0) && (m_pHandler != nullptr)) {
+			LIBISDB_TRACE(LIBISDB_STR("MMTMediaReceiver : Leap second {:+}\n"), Step);
+			m_pHandler->OnNTPLeapSecond(this, Step);
+		}
+	}
+
+	m_LastNTPTime = Time;
 }
 
 

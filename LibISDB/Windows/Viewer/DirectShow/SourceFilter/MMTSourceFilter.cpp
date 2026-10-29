@@ -257,6 +257,15 @@ bool MMTSourceFilter::InputAccessUnit(PinType Type, const MPUAssembler::AccessUn
 }
 
 
+void MMTSourceFilter::OnLeapSecond(int Seconds)
+{
+	BlockLock Lock(m_SyncLock);
+
+	if (m_IsSynced)
+		m_TimeOffset -= static_cast<REFERENCE_TIME>(Seconds) * 10000000;
+}
+
+
 void MMTSourceFilter::Reset()
 {
 	m_pVideoPin->ClearQueue();
