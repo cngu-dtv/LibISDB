@@ -456,6 +456,7 @@ void raw_data_block(NeAACDecStruct *hDecoder, NeAACDecFrameInfo *hInfo,
     hDecoder->fr_ch_ele = 0;
     hDecoder->first_syn_ele = 25;
     hDecoder->has_lfe = 0;
+    hDecoder->dse_bytes = 0; /* LibISDB */
 
 #ifdef ERROR_RESILIENCE
     if (hDecoder->object_type < ER_OBJECT_START)
@@ -1081,7 +1082,6 @@ static uint16_t data_stream_element(NeAACDecStruct *hDecoder, bitfile *ld)
 {
     uint8_t byte_aligned;
     uint16_t i, count;
-    (void)hDecoder;  /* TODO: remove parameter; rename method; why result is unused? */
 
     /* element_instance_tag = */ faad_getbits(ld, LEN_TAG
         DEBUGVAR(1,60,"data_stream_element(): element_instance_tag"));
@@ -1097,11 +1097,13 @@ static uint16_t data_stream_element(NeAACDecStruct *hDecoder, bitfile *ld)
     if (byte_aligned)
         faad_byte_align(ld);
 
+    /* LibISDB: keep the payload (ARIB STD-B32 Part 2 downmix coefficients are sent in a DSE) */
     for (i = 0; i < count; i++)
     {
-        faad_getbits(ld, LEN_BYTE
+        hDecoder->dse_data[i] = (uint8_t)faad_getbits(ld, LEN_BYTE
             DEBUGVAR(1,64,"data_stream_element(): data_stream_byte"));
     }
+    hDecoder->dse_bytes = count;
 
     return count;
 }

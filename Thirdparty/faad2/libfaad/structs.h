@@ -366,6 +366,9 @@ typedef struct
        determines whether the data needed for the element is allocated or not
     */
     uint8_t element_alloced[MAX_SYNTAX_ELEMENTS];
+    /* LibISDB: data_stream_element() payload of the current frame (last DSE), 0 if none */
+    uint16_t dse_bytes;
+    uint8_t dse_data[510];
     /* sample_buffer_size:
        (internal) output dara buffer size
     */

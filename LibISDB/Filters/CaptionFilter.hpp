@@ -97,6 +97,9 @@ namespace LibISDB
 		bool SetTargetStream(uint16_t ServiceID, uint8_t ComponentTag = 0xFF);
 		uint16_t GetTargetServiceID() const noexcept { return m_TargetServiceID; }
 		uint8_t GetTargetComponentTag() const noexcept { return m_TargetComponentTag; }
+		// TLV/MMT では字幕と同時に文字スーパーのアセットも扱う (ARIB TR-B39 第1部 第2編 4.7.3)
+		void SetSuperimposeEnabled(bool Enable);
+		bool GetSuperimposeEnabled() const noexcept { return m_SuperimposeEnabled; }
 		void SetFollowActiveService(bool Follow);
 		bool GetFollowActiveService() const noexcept { return m_FollowActiveService; }
 		void SetCaptionHandler(Handler *pHandler);
@@ -136,7 +139,10 @@ namespace LibISDB
 
 		int GetMMTServiceIndexByID(uint16_t ServiceID) const;
 		const MMTCaptionAssetInfo * GetMMTTargetAsset() const;
+		const MMTCaptionAssetInfo * GetMMTAssetByPacketID(uint16_t PacketID) const;
+		static bool IsMMTSuperimposeAsset(const MMTCaptionAssetInfo &Asset) noexcept;
 		void SelectMMTTargetAsset();
+		void SetMMTAssetHandler(uint16_t PacketID, MPUAssembler::Handler *pHandler);
 		void CheckMMTLanguageUpdate();
 		void OnPLTTable(const MMTSingleTable *pTable);
 		void OnMPTTable(const MMTSingleTable *pTable);
@@ -165,7 +171,9 @@ namespace LibISDB
 
 		MMTPacketIDMapManager m_MMTPacketIDMapManager;
 		std::vector<MMTServiceInfo> m_MMTServiceList;
-		uint16_t m_TargetPacketID;
+		bool m_SuperimposeEnabled;
+		uint16_t m_TargetPacketID;      /**< 字幕 (SetTargetStream で選択) */
+		uint16_t m_SuperimposePacketID; /**< 文字スーパー (自動選択) */
 		uint16_t m_NotifiedPacketID;
 		uint32_t m_NotifiedLanguageCode;
 	};

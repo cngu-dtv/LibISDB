@@ -30,6 +30,7 @@
 
 #include "AACDecoder.hpp"
 #include "../../../../MediaParsers/ADTSParser.hpp"
+#include "../../../../MediaParsers/AACDownmix.hpp"
 #include <vector>
 
 
@@ -67,6 +68,7 @@ namespace LibISDB::DirectShow
 		bool m_InitRequest;
 		uint8_t m_LastChannelConfig;
 		std::vector<int16_t> m_DownmixBuffer;
+		AACDownmixCoefficients m_DownmixCoefficients;
 	};
 
 } // namespace LibISDB::DirectShow

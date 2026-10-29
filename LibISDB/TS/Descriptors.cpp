@@ -2360,7 +2360,8 @@ bool SystemManagementDescriptor::StoreContents(const uint8_t *pPayload)
 {
 	if (m_Tag != TAG)
 		return false;
-	if (m_Length != 2)
+	// system_management_id の後に additional_identification_info が続くことがある
+	if (m_Length < 2)
 		return false;
 
 	m_BroadcastingFlag         = (pPayload[0] & 0xC0) >> 6;

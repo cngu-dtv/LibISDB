@@ -26,7 +26,6 @@
 
 #include "../../../../LibISDBPrivate.hpp"
 #include "AACDecoder_FAAD2.hpp"
-#include "../../../../MediaParsers/AACDownmix.hpp"
 
 #include "../../../../../Thirdparty/faad2/include/neaacdec.h"
 // ダウンミックス係数のパラメータ取得にFAAD2の内部情報が必要
@@ -135,7 +134,11 @@ bool AACDecoder_FAAD2::GetDownmixInfo(ReturnArg<DownmixInfo> Info) const
 	Info->Rear   = PSQR;
 	Info->LFE    = 0.0;
 
-	if (m_hDecoder) {
+	// 5.1ch を超える音声モードでは係数は DSE で送られる (STD-B32 第 2 部 6.2.3 (3) (e))
+	if (m_DownmixCoefficients.HasMixLevels) {
+		Info->Center = AACDownmixLevelToGain(m_DownmixCoefficients.CenterMixLevel);
+		Info->Rear = AACDownmixLevelToGain(m_DownmixCoefficients.SurroundMixLevel);
+	} else if (m_hDecoder) {
 		const NeAACDecStruct *pDec = static_cast<const NeAACDecStruct *>(m_hDecoder);
 
 		if (pDec->pce.matrix_mixdown_idx_present) {
@@ -175,6 +178,7 @@ bool AACDecoder_FAAD2::OpenDecoder()
 	m_InitRequest = true;
 	m_LastChannelConfig = 0xFF;
 	m_DecodeError = false;
+	m_DownmixCoefficients = AACDownmixCoefficients();
 
 	return true;
 }
@@ -280,12 +284,18 @@ bool AACDecoder_FAAD2::DecodeData(const uint8_t *pData, size_t Size, ReturnArg<D
 	if (FrameInfo.error == 0) {
 		int Channels = FrameInfo.channels;
 
+		// ダウンミックスの係数は DSE で送られる (STD-B32 第 2 部 6.2.3 (3)、送られるまでは既定値)
+		const NeAACDecStruct *pDec = static_cast<const NeAACDecStruct *>(m_hDecoder);
+		if (pDec->dse_bytes > 0)
+			ParseAACAncillaryData(pDec->dse_data, pDec->dse_bytes, &m_DownmixCoefficients);
+
 		// 22.2ch は 5.1ch にして出力する
 		if ((m_LastChannelConfig == 13) && (Channels == AAC_22_2CH_CHANNEL_COUNT) && (FrameInfo.samples > 0)) {
 			const size_t SampleCount = FrameInfo.samples / AAC_22_2CH_CHANNEL_COUNT;
 			m_DownmixBuffer.resize(SampleCount * 6);
 			DownmixAAC22_2chTo5_1ch(
-				reinterpret_cast<const int16_t *>(pPCMBuffer), m_DownmixBuffer.data(), SampleCount);
+				reinterpret_cast<const int16_t *>(pPCMBuffer), m_DownmixBuffer.data(), SampleCount,
+				m_DownmixCoefficients);
 			pPCMBuffer = reinterpret_cast<const uint8_t *>(m_DownmixBuffer.data());
 			Channels = 6;
 		}

@@ -2734,12 +2734,15 @@ TEST_CASE("CaptionFilterMMT", "[mmt][caption][filter]")
 		CHECK(pCaption->GetLanguageCount() == 1);
 		CHECK(pCaption->GetLanguageCode(0) == LANGUAGE_CODE_JPN);
 
-		// 既定は component_tag の最も小さい字幕
-		REQUIRE(Recorder.Captions.size() == 1);
+		// 既定は component_tag の最も小さい字幕、文字スーパーは同時に扱う
+		REQUIRE(Recorder.Captions.size() == 2);
 		const CaptionFilter::TTMLCaptionInfo &Info = Recorder.Captions[0];
 		CHECK(Info.PacketID == 0x0130);
 		CHECK(Info.ComponentTag == 0x0030);
 		CHECK_FALSE(Info.Superimpose);
+		CHECK(Recorder.Captions[1].PacketID == 0x0138);
+		CHECK(Recorder.Captions[1].Superimpose);
+		CHECK(Recorder.Documents[1] == Document2);
 		REQUIRE(Info.HasSubtitleInfo);
 		CHECK(Info.SubtitleInfo.TMD == MHDataComponentDescriptor::TMD_REFERENCE_START_TIME);
 		CHECK(Info.SubtitleInfo.DMF == 0xA);
@@ -2761,6 +2764,23 @@ TEST_CASE("CaptionFilterMMT", "[mmt][caption][filter]")
 		CHECK(Recorder.Documents[0] == Document2);
 	}
 
+	SECTION("SuperimposeDisabled") {
+		pCaption->SetSuperimposeEnabled(false);
+		pCaption->SetActiveServiceID(0x0400);
+		InputFilter(*pParser, Concat(Packets), 4096);
+
+		REQUIRE(Recorder.Captions.size() == 1);
+		CHECK(Recorder.Captions[0].PacketID == 0x0130);
+
+		// 有効にすると文字スーパーも届く
+		pCaption->SetSuperimposeEnabled(true);
+		InputFilter(*pParser, MakeMPUTLV(0x0138, 201, true,
+			MakeMPUPayload(0, 51, {MakeCaptionMFU(0, 0, MMT_CAPTION_DATA_TYPE_TTML, Document2)})), 4096);
+		REQUIRE(Recorder.Captions.size() == 2);
+		CHECK(Recorder.Captions[1].PacketID == 0x0138);
+		CHECK(Recorder.Captions[1].MPUSequenceNumber == 51);
+	}
+
 	SECTION("NoTarget") {
 		InputFilter(*pParser, Concat(Packets), 4096);
 		CHECK(Recorder.Captions.empty());
@@ -2774,7 +2794,7 @@ TEST_CASE("CaptionFilterMMT", "[mmt][caption][filter]")
 		pCaption->Reset();
 		CHECK(pCaption->GetLanguageCount() == 0);
 		InputFilter(*pParser, Packets[2], 4096);
-		CHECK(Recorder.Captions.size() == 1);
+		CHECK(Recorder.Captions.size() == 2);
 	}
 }
 
@@ -3740,18 +3760,66 @@ TEST_CASE("AACDownmix", "[mediaparser][aac]")
 	};
 
 	const auto Downmix =
-		[](std::initializer_list<std::pair<int, std::int16_t>> Values) {
+		[](std::initializer_list<std::pair<int, std::int16_t>> Values, const AACDownmixCoefficients &Coefficients = AACDownmixCoefficients()) {
 			std::int16_t Src[AAC_22_2CH_CHANNEL_COUNT * 2] = {};
 			for (const auto &e : Values) {
 				Src[e.first] = e.second;
 				Src[AAC_22_2CH_CHANNEL_COUNT + e.first] = e.second;
 			}
 			std::vector<std::int16_t> Dst(12, 0x7777);
-			DownmixAAC22_2chTo5_1ch(Src, Dst.data(), 2);
+			DownmixAAC22_2chTo5_1ch(Src, Dst.data(), 2, Coefficients);
 			CHECK(std::equal(Dst.begin(), Dst.begin() + 6, Dst.begin() + 6));
 			Dst.resize(6);
 			return Dst;
 		};
+
+	// ISO/IEC 14496-3 AMD4 表 AMD4.8 / AMD4.9
+	CHECK(AACDownmixLevelToGain(0) == 1.0f);
+	CHECK(AACDownmixLevelToGain(2) == 0.707f);
+	CHECK(AACDownmixLevelToGain(7) == 0.0f);
+	CHECK(AACDownmixLFELevelToGain(5) == 1.0f);
+	CHECK(AACDownmixLFELevelToGain(7) == 0.707f);
+	CHECK(AACDownmixLFELevelToGain(15) == 0.0f);
+
+	// DSE の MPEG4_ancillary_data() (NHK BS8K の 22.2ch 番組の実データ、全て既定値)
+	AACDownmixCoefficients Parsed;
+	const ByteArray RealDSE = HexBytes("BCC01CAA010000BDB62270");
+	REQUIRE(ParseAACAncillaryData(RealDSE.data(), RealDSE.size(), &Parsed));
+	CHECK(Parsed.HasMixLevels);
+	CHECK(Parsed.CenterMixLevel == 2);
+	CHECK(Parsed.SurroundMixLevel == 2);
+	CHECK(Parsed.DmixC == 3);
+	CHECK(Parsed.DmixD == 3);
+	CHECK(Parsed.DmixE == 0);
+	CHECK(Parsed.DmixF == 4);
+	CHECK(Parsed.DmixG == 2);
+	CHECK(Parsed.DmixLFE == 7);
+	// 既定値以外: center 4 / surround 7、dmix_a 1 / dmix_b 5、c..g = 1,2,3,4,5、l = 15
+	const ByteArray CustomDSE = HexBytes("BCC018CF4034BD94E5F0");
+	REQUIRE(ParseAACAncillaryData(CustomDSE.data(), CustomDSE.size(), &Parsed));
+	CHECK(Parsed.CenterMixLevel == 4);
+	CHECK(Parsed.SurroundMixLevel == 7);
+	CHECK(Parsed.DmixA == 1);
+	CHECK(Parsed.DmixB == 5);
+	CHECK(Parsed.DmixC == 1);
+	CHECK(Parsed.DmixD == 2);
+	CHECK(Parsed.DmixE == 3);
+	CHECK(Parsed.DmixF == 4);
+	CHECK(Parsed.DmixG == 5);
+	CHECK(Parsed.DmixLFE == 15);
+	// ARIB 拡張が無ければ 22.2ch の係数は変わらない
+	const ByteArray NoExtDSE = HexBytes("BCC000");
+	REQUIRE(ParseAACAncillaryData(NoExtDSE.data(), NoExtDSE.size(), &Parsed));
+	CHECK(Parsed.DmixC == 1);
+	CHECK(Parsed.CenterMixLevel == 4);
+	CHECK_FALSE(ParseAACAncillaryData(HexBytes("BB0000").data(), 3, &Parsed));
+	CHECK_FALSE(ParseAACAncillaryData(RealDSE.data(), 2, &Parsed));
+
+	// 係数の指定: FLc を -∞ (7)、LFE を 0 dB (5)
+	AACDownmixCoefficients Custom;
+	Custom.DmixC = 7;
+	Custom.DmixLFE = 5;
+	CHECK(Downmix({{FLc, 1000}, {LFE1, 1000}}, Custom) == std::vector<std::int16_t> {0, 0, 0, 0, 0, 1000});
 
 	// 出力は C, L, R, Ls, Rs, LFE
 	CHECK(Downmix({{FC, 1000}}) == std::vector<std::int16_t> {1000, 0, 0, 0, 0, 0});

@@ -89,7 +89,9 @@ CaptionFilter::CaptionFilter()
 	, m_pCaptionHandler(nullptr)
 	, m_pDRCSMap(nullptr)
 
+	, m_SuperimposeEnabled(true)
 	, m_TargetPacketID(MMT_PACKET_ID_INVALID)
+	, m_SuperimposePacketID(MMT_PACKET_ID_INVALID)
 	, m_NotifiedPacketID(MMT_PACKET_ID_INVALID)
 	, m_NotifiedLanguageCode(LANGUAGE_CODE_INVALID)
 {
@@ -112,6 +114,7 @@ void CaptionFilter::Reset()
 
 	m_MMTServiceList.clear();
 	m_TargetPacketID = MMT_PACKET_ID_INVALID;
+	m_SuperimposePacketID = MMT_PACKET_ID_INVALID;
 	m_NotifiedPacketID = MMT_PACKET_ID_INVALID;
 	m_NotifiedLanguageCode = LANGUAGE_CODE_INVALID;
 
@@ -198,6 +201,17 @@ void CaptionFilter::SetFollowActiveService(bool Follow)
 	BlockLock Lock(m_FilterLock);
 
 	m_FollowActiveService = Follow;
+}
+
+
+void CaptionFilter::SetSuperimposeEnabled(bool Enable)
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (m_SuperimposeEnabled != Enable) {
+		m_SuperimposeEnabled = Enable;
+		SelectMMTTargetAsset();
+	}
 }
 
 
@@ -370,26 +384,20 @@ void CaptionFilter::OnCaptionUnit(const MPUAssembler *pAssembler, const MPUAssem
 	if (m_pCaptionHandler == nullptr)
 		return;
 
-	const MMTCaptionAssetInfo *pAsset = GetMMTTargetAsset();
-	if ((pAsset == nullptr) || (pAsset->PacketID != Unit.PacketID))
+	if ((Unit.PacketID != m_TargetPacketID) && (Unit.PacketID != m_SuperimposePacketID))
+		return;
+	const MMTCaptionAssetInfo *pAsset = GetMMTAssetByPacketID(Unit.PacketID);
+	if (pAsset == nullptr)
 		return;
 
-	CheckMMTLanguageUpdate();
+	if (Unit.PacketID == m_TargetPacketID)
+		CheckMMTLanguageUpdate();
 
 	TTMLCaptionInfo Info;
 
 	Info.PacketID = Unit.PacketID;
 	Info.ComponentTag = pAsset->ComponentTag;
-	if ((pAsset->ComponentTag >= MMT_COMPONENT_TAG_SUPERIMPOSE_FIRST)
-			&& (pAsset->ComponentTag <= MMT_COMPONENT_TAG_SUPERIMPOSE_LAST))
-		Info.Superimpose = true;
-	else if ((pAsset->ComponentTag >= MMT_COMPONENT_TAG_CAPTION_FIRST)
-			&& (pAsset->ComponentTag <= MMT_COMPONENT_TAG_CAPTION_LAST))
-		Info.Superimpose = false;
-	else
-		Info.Superimpose =
-			pAsset->HasSubtitleInfo
-			&& (pAsset->SubtitleInfo.Type == MHDataComponentDescriptor::SUBTITLE_TYPE_SUPERIMPOSE);
+	Info.Superimpose = IsMMTSuperimposeAsset(*pAsset);
 	Info.HasSubtitleInfo = pAsset->HasSubtitleInfo;
 	Info.SubtitleInfo = pAsset->SubtitleInfo;
 	Info.MPUSequenceNumber = Unit.MPUSequenceNumber;
@@ -421,12 +429,18 @@ int CaptionFilter::GetMMTServiceIndexByID(uint16_t ServiceID) const
 
 const CaptionFilter::MMTCaptionAssetInfo * CaptionFilter::GetMMTTargetAsset() const
 {
-	if (m_TargetPacketID == MMT_PACKET_ID_INVALID)
+	return GetMMTAssetByPacketID(m_TargetPacketID);
+}
+
+
+const CaptionFilter::MMTCaptionAssetInfo * CaptionFilter::GetMMTAssetByPacketID(uint16_t PacketID) const
+{
+	if (PacketID == MMT_PACKET_ID_INVALID)
 		return nullptr;
 
 	for (const MMTServiceInfo &Service : m_MMTServiceList) {
 		for (const MMTCaptionAssetInfo &Asset : Service.CaptionAssetList) {
-			if (Asset.PacketID == m_TargetPacketID)
+			if (Asset.PacketID == PacketID)
 				return &Asset;
 		}
 	}
@@ -435,29 +449,66 @@ const CaptionFilter::MMTCaptionAssetInfo * CaptionFilter::GetMMTTargetAsset() co
 }
 
 
+bool CaptionFilter::IsMMTSuperimposeAsset(const MMTCaptionAssetInfo &Asset) noexcept
+{
+	// component_tag の割り当て (ARIB TR-B39 第1部 第4編 表 15.2-1)
+	if ((Asset.ComponentTag >= MMT_COMPONENT_TAG_SUPERIMPOSE_FIRST)
+			&& (Asset.ComponentTag <= MMT_COMPONENT_TAG_SUPERIMPOSE_LAST))
+		return true;
+	if ((Asset.ComponentTag >= MMT_COMPONENT_TAG_CAPTION_FIRST)
+			&& (Asset.ComponentTag <= MMT_COMPONENT_TAG_CAPTION_LAST))
+		return false;
+	return Asset.HasSubtitleInfo
+		&& (Asset.SubtitleInfo.Type == MHDataComponentDescriptor::SUBTITLE_TYPE_SUPERIMPOSE);
+}
+
+
 void CaptionFilter::SelectMMTTargetAsset()
 {
-	if (m_TargetPacketID != MMT_PACKET_ID_INVALID) {
-		MPUAssemblerTarget *pTarget = m_MMTPacketIDMapManager.GetMapTarget<MPUAssemblerTarget>(m_TargetPacketID);
-		if (pTarget != nullptr)
-			pTarget->GetAssembler().SetHandler(nullptr);
-		m_TargetPacketID = MMT_PACKET_ID_INVALID;
-	}
+	SetMMTAssetHandler(m_TargetPacketID, nullptr);
+	SetMMTAssetHandler(m_SuperimposePacketID, nullptr);
+	m_TargetPacketID = MMT_PACKET_ID_INVALID;
+	m_SuperimposePacketID = MMT_PACKET_ID_INVALID;
 
 	const int Index = GetMMTServiceIndexByID(m_TargetServiceID);
 	if (Index < 0)
 		return;
 
-	for (const MMTCaptionAssetInfo &Asset : m_MMTServiceList[Index].CaptionAssetList) {
-		if ((m_TargetComponentTag == 0xFF) || (Asset.ComponentTag == m_TargetComponentTag)) {
-			MPUAssemblerTarget *pTarget = m_MMTPacketIDMapManager.GetMapTarget<MPUAssemblerTarget>(Asset.PacketID);
-			if (pTarget != nullptr) {
-				pTarget->GetAssembler().SetHandler(this);
+	const std::vector<MMTCaptionAssetInfo> &AssetList = m_MMTServiceList[Index].CaptionAssetList;
+
+	// 字幕は指定された component_tag、指定が無ければ最も小さい component_tag の字幕
+	for (const MMTCaptionAssetInfo &Asset : AssetList) {
+		if ((m_TargetComponentTag == 0xFF) ? !IsMMTSuperimposeAsset(Asset) : (Asset.ComponentTag == m_TargetComponentTag)) {
+			if (m_MMTPacketIDMapManager.GetMapTarget<MPUAssemblerTarget>(Asset.PacketID) != nullptr)
 				m_TargetPacketID = Asset.PacketID;
-			}
 			break;
 		}
 	}
+
+	// 文字スーパーは字幕と同時に扱う (ARIB TR-B39 第1部 第2編 4.7.3)
+	if (m_SuperimposeEnabled) {
+		for (const MMTCaptionAssetInfo &Asset : AssetList) {
+			if (IsMMTSuperimposeAsset(Asset) && (Asset.PacketID != m_TargetPacketID)) {
+				if (m_MMTPacketIDMapManager.GetMapTarget<MPUAssemblerTarget>(Asset.PacketID) != nullptr)
+					m_SuperimposePacketID = Asset.PacketID;
+				break;
+			}
+		}
+	}
+
+	SetMMTAssetHandler(m_TargetPacketID, this);
+	SetMMTAssetHandler(m_SuperimposePacketID, this);
+}
+
+
+void CaptionFilter::SetMMTAssetHandler(uint16_t PacketID, MPUAssembler::Handler *pHandler)
+{
+	if (PacketID == MMT_PACKET_ID_INVALID)
+		return;
+
+	MPUAssemblerTarget *pTarget = m_MMTPacketIDMapManager.GetMapTarget<MPUAssemblerTarget>(PacketID);
+	if (pTarget != nullptr)
+		pTarget->GetAssembler().SetHandler(pHandler);
 }
 
 
@@ -491,6 +542,7 @@ void CaptionFilter::OnPLTTable(const MMTSingleTable *pTable)
 	}
 
 	m_TargetPacketID = MMT_PACKET_ID_INVALID;
+	m_SuperimposePacketID = MMT_PACKET_ID_INVALID;
 
 	m_MMTServiceList.resize(pPLTable->GetPackageCount());
 

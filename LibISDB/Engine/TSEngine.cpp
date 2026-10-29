@@ -545,7 +545,8 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 		[ServiceID](FilterBase *pFilter) { pFilter->SetActiveServiceID(ServiceID); });
 
 	SetVideoStreamID(VideoID, true);
-	SetAudioStreamID(AudioID, true);
+	// MMT では同じサービス内の音声の切り替えを映像を止めずに行う (ARIB TR-B39 第1部 第7編 7.5)
+	SetAudioStreamID(AudioID, !pSource->IsMMT() || ServiceChanged);
 
 #if 0
 	if (m_WriteCurServiceOnly)
