@@ -43,6 +43,7 @@ ViewerEngine::ViewerEngine() noexcept
 
 bool ViewerEngine::BuildViewer(const ViewerFilter::OpenSettings &Settings)
 {
+	const ViewerFilter::OpenSettings OpenSettings = GetOpenSettings(Settings);
 	const FilterGraph::IDType FilterID = m_FilterGraph.GetFilterID(m_pViewer);
 	if (FilterID == 0) {
 		return false;
@@ -52,7 +53,7 @@ bool ViewerEngine::BuildViewer(const ViewerFilter::OpenSettings &Settings)
 	m_FilterGraph.DisconnectFilter(FilterID, FilterGraph::ConnectDirection::Upstream);
 	m_EngineLock.Unlock();
 
-	const bool OK = m_pViewer->OpenViewer(Settings);
+	const bool OK = m_pViewer->OpenViewer(OpenSettings);
 	if (!OK)
 		SetError(m_pViewer->GetLastErrorDescription());
 
@@ -68,6 +69,7 @@ bool ViewerEngine::BuildViewer(const ViewerFilter::OpenSettings &Settings)
 
 bool ViewerEngine::RebuildViewer(const ViewerFilter::OpenSettings &Settings)
 {
+	const ViewerFilter::OpenSettings OpenSettings = GetOpenSettings(Settings);
 	const FilterGraph::IDType FilterID = m_FilterGraph.GetFilterID(m_pViewer);
 	if (FilterID == 0) {
 		return false;
@@ -80,7 +82,7 @@ bool ViewerEngine::RebuildViewer(const ViewerFilter::OpenSettings &Settings)
 	m_EngineLock.Unlock();
 
 	m_pViewer->CloseViewer();
-	const bool OK = m_pViewer->OpenViewer(Settings);
+	const bool OK = m_pViewer->OpenViewer(OpenSettings);
 	if (!OK)
 		SetError(m_pViewer->GetLastErrorDescription());
 
@@ -159,17 +161,18 @@ bool ViewerEngine::IsStreamTypePlayable(uint8_t StreamType) const
 
 bool ViewerEngine::IsSelectableService(int Index) const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return false;
 
-	if ((Index < 0) || (Index >= m_pAnalyzer->GetServiceCount()))
+	if ((Index < 0) || (Index >= pSource->GetServiceCount()))
 		return false;
 
-	if (m_pAnalyzer->GetVideoESCount(Index) > 0) {
-		if (IsStreamTypePlayable(m_pAnalyzer->GetVideoStreamType(Index, 0)))
+	if (pSource->GetVideoStreamCount(Index) > 0) {
+		if (IsStreamTypePlayable(pSource->GetVideoStreamType(Index, 0)))
 			return true;
 	} else if (m_PlayRadio) {
-		if (IsStreamTypePlayable(m_pAnalyzer->GetAudioStreamType(Index, 0)))
+		if (IsStreamTypePlayable(pSource->GetAudioStreamType(Index, 0)))
 			return true;
 	}
 
@@ -179,10 +182,11 @@ bool ViewerEngine::IsSelectableService(int Index) const
 
 int ViewerEngine::GetSelectableServiceCount() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return 0;
 
-	const int ServiceCount = m_pAnalyzer->GetServiceCount();
+	const int ServiceCount = pSource->GetServiceCount();
 	int Count = 0;
 
 	for (int i = 0; i < ServiceCount; i++) {
@@ -196,16 +200,17 @@ int ViewerEngine::GetSelectableServiceCount() const
 
 uint16_t ViewerEngine::GetSelectableServiceID(int Index) const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return SERVICE_ID_INVALID;
 
-	const int ServiceCount = m_pAnalyzer->GetServiceCount();
+	const int ServiceCount = pSource->GetServiceCount();
 	int Count = 0;
 
 	for (int i = 0; i < ServiceCount; i++) {
 		if (IsSelectableService(i)) {
 			if (Count == Index) {
-				return m_pAnalyzer->GetServiceID(i);
+				return pSource->GetServiceID(i);
 			}
 			Count++;
 		}
@@ -217,19 +222,20 @@ uint16_t ViewerEngine::GetSelectableServiceID(int Index) const
 
 uint16_t ViewerEngine::GetDefaultServiceID() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return SERVICE_ID_INVALID;
 
-	if (m_pAnalyzer->Is1SegStream())
-		return m_pAnalyzer->GetServiceID(-1);
+	if (pSource->Is1SegStream())
+		return pSource->GetServiceID(-1);
 
-	const int ServiceCount = m_pAnalyzer->GetServiceCount();
+	const int ServiceCount = pSource->GetServiceCount();
 
 	for (int i = 0; i < ServiceCount; i++) {
-		if (!m_pAnalyzer->IsServicePMTAcquired(i))
+		if (!pSource->IsServiceInfoAcquired(i))
 			return SERVICE_ID_INVALID;
 		if (IsSelectableService(i)) {
-			return m_pAnalyzer->GetServiceID(i);
+			return pSource->GetServiceID(i);
 		}
 	}
 
@@ -239,15 +245,16 @@ uint16_t ViewerEngine::GetDefaultServiceID() const
 
 int ViewerEngine::GetSelectableServiceIndexByID(uint16_t ServiceID) const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return -1;
 
-	const int ServiceCount = m_pAnalyzer->GetServiceCount();
+	const int ServiceCount = pSource->GetServiceCount();
 	int Count = 0;
 
 	for (int i = 0; i < ServiceCount; i++) {
 		if (IsSelectableService(i)) {
-			if (m_pAnalyzer->GetServiceID(i) == ServiceID)
+			if (pSource->GetServiceID(i) == ServiceID)
 				return Count;
 			Count++;
 		}
@@ -264,7 +271,7 @@ bool ViewerEngine::GetSelectableServiceList(AnalyzerFilter::ServiceList *pList) 
 
 	pList->clear();
 
-	if (m_pAnalyzer == nullptr)
+	if ((m_pAnalyzer == nullptr) || IsMMTStream())
 		return false;
 
 	const int ServiceCount = m_pAnalyzer->GetServiceCount();
@@ -272,6 +279,27 @@ bool ViewerEngine::GetSelectableServiceList(AnalyzerFilter::ServiceList *pList) 
 	for (int i = 0; i < ServiceCount; i++) {
 		if (IsSelectableService(i))
 			m_pAnalyzer->GetServiceInfo(i, &pList->emplace_back());
+	}
+
+	return true;
+}
+
+
+bool ViewerEngine::GetSelectableMMTServiceList(MMTAnalyzerFilter::ServiceList *pList) const
+{
+	if (pList == nullptr)
+		return false;
+
+	pList->clear();
+
+	if (!IsMMTStream())
+		return false;
+
+	const int ServiceCount = m_pMMTAnalyzer->GetServiceCount();
+
+	for (int i = 0; i < ServiceCount; i++) {
+		if (IsSelectableService(i))
+			m_pMMTAnalyzer->GetServiceInfo(i, &pList->emplace_back());
 	}
 
 	return true;
@@ -290,8 +318,10 @@ void ViewerEngine::OnFilterRegistered(FilterBase *pFilter, FilterGraph::IDType I
 
 void ViewerEngine::OnServiceChanged(uint16_t ServiceID)
 {
-	if ((m_pViewer != nullptr) && (m_pAnalyzer != nullptr)) {
-		m_pViewer->Set1SegMode(m_pAnalyzer->Is1SegService(m_pAnalyzer->GetServiceIndexByID(ServiceID)));
+	const ServiceSource *pSource = GetServiceSource();
+
+	if ((m_pViewer != nullptr) && (pSource != nullptr)) {
+		m_pViewer->Set1SegMode(pSource->Is1SegService(pSource->GetServiceIndexByID(ServiceID)));
 	}
 }
 
@@ -308,20 +338,58 @@ void ViewerEngine::OnAudioStreamTypeChanged(uint8_t StreamType)
 }
 
 
+bool ViewerEngine::IsAudioPlayable(uint8_t StreamType, const EventInfo::AudioInfo *pInfo) const
+{
+	if (!IsStreamTypePlayable(StreamType))
+		return false;
+
+	if ((pInfo != nullptr) && (m_pViewer != nullptr))
+		return m_pViewer->IsMMTAudioPlayable(pInfo->StreamContent, pInfo->ComponentType);
+
+	return true;
+}
+
+
+bool ViewerEngine::IsStereoAudioPreferred() const
+{
+	return (m_pViewer != nullptr) && m_pViewer->GetDownMixSurround();
+}
+
+
 void ViewerEngine::UpdateVideoAndAudioPID()
 {
 	BlockLock Lock(m_EngineLock);
 
+	const ServiceSource *pSource = GetServiceSource();
 	const int ServiceIndex = GetServiceIndex();
 
-	if (ServiceIndex >= 0) {
-		const uint16_t VideoPID = m_pAnalyzer->GetVideoESPID(ServiceIndex, m_CurVideoStream);
-		if (VideoPID != PID_INVALID)
-			m_pViewer->SetActiveVideoPID(VideoPID, false);
-		const uint16_t AudioPID = m_pAnalyzer->GetAudioESPID(ServiceIndex, m_CurAudioStream);
-		if (AudioPID != PID_INVALID)
-			m_pViewer->SetActiveAudioPID(AudioPID, false);
+	if ((pSource != nullptr) && (ServiceIndex >= 0)) {
+		const uint16_t InvalidID = pSource->GetInvalidStreamID();
+		const uint16_t VideoID = pSource->GetVideoStreamID(ServiceIndex, m_CurVideoStream);
+		if (VideoID != InvalidID) {
+			if (pSource->IsMMT())
+				m_pViewer->SetActiveVideoPacketID(VideoID, false);
+			else
+				m_pViewer->SetActiveVideoPID(VideoID, false);
+		}
+		const uint16_t AudioID = pSource->GetAudioStreamID(ServiceIndex, m_CurAudioStream);
+		if (AudioID != InvalidID) {
+			if (pSource->IsMMT())
+				m_pViewer->SetActiveAudioPacketID(AudioID, false);
+			else
+				m_pViewer->SetActiveAudioPID(AudioID, false);
+		}
 	}
+}
+
+
+ViewerFilter::OpenSettings ViewerEngine::GetOpenSettings(const ViewerFilter::OpenSettings &Settings) const
+{
+	ViewerFilter::OpenSettings NewSettings = Settings;
+
+	NewSettings.Format = IsMMTStream() ? StreamFormat::TLV : StreamFormat::TS;
+
+	return NewSettings;
 }
 
 

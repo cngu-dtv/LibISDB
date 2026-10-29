@@ -162,7 +162,7 @@ int8_t AudioSpecificConfigFromBitfile(bitfile *ld,
         return -2;
     }
 
-    if (mp4ASC->channelsConfiguration > 7)
+    if ((mp4ASC->channelsConfiguration > 7) && ((mp4ASC->channelsConfiguration < 11) || (mp4ASC->channelsConfiguration > 14))) /* LibISDB: ISO/IEC 14496-3 AMD4 (ARIB STD-B32) */
     {
         return -3;
     }

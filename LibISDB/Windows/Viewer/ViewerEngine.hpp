@@ -43,6 +43,7 @@ namespace LibISDB
 	public:
 		ViewerEngine() noexcept;
 
+		// Settings.Format には入力中のストリームの形式を設定する
 		bool BuildViewer(const ViewerFilter::OpenSettings &Settings);
 		bool RebuildViewer(const ViewerFilter::OpenSettings &Settings);
 		bool CloseViewer();
@@ -63,14 +64,18 @@ namespace LibISDB
 		uint16_t GetDefaultServiceID() const override;
 		int GetSelectableServiceIndexByID(uint16_t ServiceID) const override;
 		bool GetSelectableServiceList(AnalyzerFilter::ServiceList *pList) const override;
+		bool GetSelectableMMTServiceList(MMTAnalyzerFilter::ServiceList *pList) const override;
 
 	protected:
 		void OnFilterRegistered(FilterBase *pFilter, FilterGraph::IDType ID) override;
 		void OnServiceChanged(uint16_t ServiceID) override;
 		void OnVideoStreamTypeChanged(uint8_t StreamType) override;
 		void OnAudioStreamTypeChanged(uint8_t StreamType) override;
+		bool IsAudioPlayable(uint8_t StreamType, const EventInfo::AudioInfo *pInfo) const override;
+		bool IsStereoAudioPreferred() const override;
 
 		void UpdateVideoAndAudioPID();
+		ViewerFilter::OpenSettings GetOpenSettings(const ViewerFilter::OpenSettings &Settings) const;
 
 		ViewerFilter *m_pViewer;
 

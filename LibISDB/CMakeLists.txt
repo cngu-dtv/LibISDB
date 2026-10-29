@@ -51,9 +51,11 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/TeeFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/TSPacketCounterFilter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Filters/TSPacketParserFilter.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/AACDownmix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/ADTSParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/H264Parser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/H265Parser.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/LATMParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEG2VideoParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MediaParsers/MPEGVideoParser.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MHEventInfo.cpp
@@ -61,6 +63,7 @@ add_library(LibISDB STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTDescriptorBlock.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTDescriptors.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTGeneralLocationInfo.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTMediaReceiver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPacketIDMap.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPPacket.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/MMT/MMTPPayload.cpp

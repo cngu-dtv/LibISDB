@@ -201,6 +201,12 @@
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\VideoParsers\VideoParser.hpp">
       <Filter>Viewer\DirectShow\VideoParsers\Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourceFilter.hpp">
+      <Filter>Viewer\DirectShow\SourceFilter\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourcePin.hpp">
+      <Filter>Viewer\DirectShow\SourceFilter\Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\RingBuffer.hpp">
       <Filter>Viewer\DirectShow\SourceFilter\Header Files</Filter>
     </ClInclude>
@@ -334,6 +340,12 @@
     </ClCompile>
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\VideoParsers\VideoParser.cpp">
       <Filter>Viewer\DirectShow\VideoParsers\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourceFilter.cpp">
+      <Filter>Viewer\DirectShow\SourceFilter\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourcePin.cpp">
+      <Filter>Viewer\DirectShow\SourceFilter\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourceFilter.cpp">
       <Filter>Viewer\DirectShow\SourceFilter\Source Files</Filter>

@@ -47,6 +47,8 @@
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\ImageMixers\ImageMixer_VMR7.hpp" />
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\ImageMixers\ImageMixer_VMR9.hpp" />
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\KnownDecoderManager.hpp" />
+    <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourceFilter.hpp" />
+    <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourcePin.hpp" />
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\RingBuffer.hpp" />
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourceFilter.hpp" />
     <ClInclude Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourcePin.hpp" />
@@ -100,6 +102,8 @@
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\ImageMixers\ImageMixer_VMR7.cpp" />
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\ImageMixers\ImageMixer_VMR9.cpp" />
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\KnownDecoderManager.cpp" />
+    <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourceFilter.cpp" />
+    <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\MMTSourcePin.cpp" />
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourceFilter.cpp" />
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourcePin.cpp" />
     <ClCompile Include="..\LibISDB\Windows\Viewer\DirectShow\SourceFilter\TSSourceStream.cpp" />

@@ -199,6 +199,9 @@
     <ClInclude Include="..\LibISDB\Filters\TSPacketParserFilter.hpp">
       <Filter>Filters\Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\LibISDB\MediaParsers\AACDownmix.hpp">
+      <Filter>MediaParsers\Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\LibISDB\MediaParsers\ADTSParser.hpp">
       <Filter>MediaParsers\Header Files</Filter>
     </ClInclude>
@@ -206,6 +209,9 @@
       <Filter>MediaParsers\Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\LibISDB\MediaParsers\H265Parser.hpp">
+      <Filter>MediaParsers\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\LibISDB\MediaParsers\LATMParser.hpp">
       <Filter>MediaParsers\Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\LibISDB\MediaParsers\MPEG2VideoParser.hpp">
@@ -388,6 +394,9 @@
     <ClInclude Include="..\LibISDB\MMT\MMTGeneralLocationInfo.hpp">
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\LibISDB\MMT\MMTMediaReceiver.hpp">
+      <Filter>MMT\Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\LibISDB\MMT\MMTPacketIDMap.hpp">
       <Filter>MMT\Header Files</Filter>
     </ClInclude>
@@ -510,6 +519,9 @@
     <ClCompile Include="..\LibISDB\Filters\TSPacketParserFilter.cpp">
       <Filter>Filters\Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\LibISDB\MediaParsers\AACDownmix.cpp">
+      <Filter>MediaParsers\Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\LibISDB\MediaParsers\ADTSParser.cpp">
       <Filter>MediaParsers\Source Files</Filter>
     </ClCompile>
@@ -517,6 +529,9 @@
       <Filter>MediaParsers\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\MediaParsers\H265Parser.cpp">
+      <Filter>MediaParsers\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\MediaParsers\LATMParser.cpp">
       <Filter>MediaParsers\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\MediaParsers\MPEG2VideoParser.cpp">
@@ -670,6 +685,9 @@
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\MMT\MMTGeneralLocationInfo.cpp">
+      <Filter>MMT\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\LibISDB\MMT\MMTMediaReceiver.cpp">
       <Filter>MMT\Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\LibISDB\MMT\MMTPacketIDMap.cpp">

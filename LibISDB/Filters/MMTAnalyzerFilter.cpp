@@ -274,6 +274,88 @@ uint16_t MMTAnalyzerFilter::GetLogoID(int Index) const
 }
 
 
+int MMTAnalyzerFilter::GetVideoAssetCount(int ServiceIndex) const
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return 0;
+
+	return static_cast<int>(m_ServiceList[ServiceIndex].VideoAssetList.size());
+}
+
+
+bool MMTAnalyzerFilter::GetVideoAssetInfo(int ServiceIndex, int AssetIndex, ReturnArg<AssetInfo> Info) const
+{
+	if (!Info)
+		return false;
+
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return false;
+	const AssetInfoList &List = m_ServiceList[ServiceIndex].VideoAssetList;
+	if (static_cast<unsigned int>(AssetIndex) >= List.size())
+		return false;
+
+	*Info = List[AssetIndex];
+
+	return true;
+}
+
+
+int MMTAnalyzerFilter::GetVideoAssetIndexByComponentTag(int ServiceIndex, uint16_t ComponentTag) const
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return -1;
+
+	return GetAssetIndexByComponentTag(m_ServiceList[ServiceIndex].VideoAssetList, ComponentTag);
+}
+
+
+int MMTAnalyzerFilter::GetAudioAssetCount(int ServiceIndex) const
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return 0;
+
+	return static_cast<int>(m_ServiceList[ServiceIndex].AudioAssetList.size());
+}
+
+
+bool MMTAnalyzerFilter::GetAudioAssetInfo(int ServiceIndex, int AssetIndex, ReturnArg<AssetInfo> Info) const
+{
+	if (!Info)
+		return false;
+
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return false;
+	const AssetInfoList &List = m_ServiceList[ServiceIndex].AudioAssetList;
+	if (static_cast<unsigned int>(AssetIndex) >= List.size())
+		return false;
+
+	*Info = List[AssetIndex];
+
+	return true;
+}
+
+
+int MMTAnalyzerFilter::GetAudioAssetIndexByComponentTag(int ServiceIndex, uint16_t ComponentTag) const
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (static_cast<unsigned int>(ServiceIndex) >= m_ServiceList.size())
+		return -1;
+
+	return GetAssetIndexByComponentTag(m_ServiceList[ServiceIndex].AudioAssetList, ComponentTag);
+}
+
+
 uint16_t MMTAnalyzerFilter::GetTLVStreamID() const
 {
 	BlockLock Lock(m_FilterLock);
@@ -646,6 +728,17 @@ void MMTAnalyzerFilter::ApplySDTServiceInfo(ServiceInfo *pServiceInfo, const MHS
 }
 
 
+int MMTAnalyzerFilter::GetAssetIndexByComponentTag(const AssetInfoList &List, uint16_t ComponentTag)
+{
+	for (size_t i = 0; i < List.size(); i++) {
+		if (List[i].ComponentTag == ComponentTag)
+			return static_cast<int>(i);
+	}
+
+	return -1;
+}
+
+
 void MMTAnalyzerFilter::UpdateSDTStreamMap(const MHSDTTable *pSDTTable)
 {
 	const uint16_t TLVStreamID = pSDTTable->GetTLVStreamID();
@@ -762,6 +855,12 @@ void MMTAnalyzerFilter::OnMPTTable(const MMTSingleTable *pTable)
 		Asset.PacketID = pMPTable->GetAssetPacketID(i);
 		Asset.AssetType = pMPTable->GetAssetType(i);
 		Asset.ComponentTag = pMPTable->GetAssetComponentTag(i);
+		const MHAudioComponentDescriptor *pAudioDesc =
+			pMPTable->GetAssetDescriptorBlock(i)->GetDescriptor<MHAudioComponentDescriptor>();
+		if (pAudioDesc != nullptr) {
+			Asset.StreamType = pAudioDesc->GetStreamType();
+			Asset.HasAudioInfo = GetMHAudioComponentInfo(pAudioDesc, &Asset.AudioInfo);
+		}
 
 		Info.AssetList.push_back(Asset);
 

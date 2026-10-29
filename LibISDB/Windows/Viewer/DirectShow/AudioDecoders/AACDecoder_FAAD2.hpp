@@ -30,6 +30,7 @@
 
 #include "AACDecoder.hpp"
 #include "../../../../MediaParsers/ADTSParser.hpp"
+#include <vector>
 
 
 typedef void *NeAACDecHandle;
@@ -43,7 +44,7 @@ namespace LibISDB::DirectShow
 		: public AACDecoder
 	{
 	public:
-		AACDecoder_FAAD2() noexcept;
+		AACDecoder_FAAD2(TransportType Transport = TransportType::ADTS) noexcept;
 		~AACDecoder_FAAD2();
 
 	// AudioDecoder
@@ -59,10 +60,13 @@ namespace LibISDB::DirectShow
 		bool OpenDecoder() override;
 		void CloseDecoder() override;
 		bool DecodeFrame(const ADTSFrame *pFrame, ReturnArg<DecodeFrameInfo> Info) override;
+		bool DecodeLATMFrame(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info) override;
+		bool DecodeData(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info);
 
 		NeAACDecHandle m_hDecoder;
 		bool m_InitRequest;
 		uint8_t m_LastChannelConfig;
+		std::vector<int16_t> m_DownmixBuffer;
 	};
 
 } // namespace LibISDB::DirectShow

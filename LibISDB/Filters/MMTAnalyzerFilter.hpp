@@ -69,6 +69,9 @@ namespace LibISDB
 			uint16_t PacketID = MMT_PACKET_ID_INVALID;
 			uint32_t AssetType = 0;
 			uint16_t ComponentTag = MMT_COMPONENT_TAG_INVALID;
+			uint8_t StreamType = STREAM_TYPE_INVALID; /**< MH-音声コンポーネント記述子の stream_type (音声のみ) */
+			bool HasAudioInfo = false;                /**< MH-音声コンポーネント記述子があるか (音声のみ) */
+			EventInfo::AudioInfo AudioInfo{};         /**< MH-音声コンポーネント記述子の内容 */
 		};
 
 		typedef std::vector<AssetInfo> AssetInfoList;
@@ -181,6 +184,12 @@ namespace LibISDB
 		bool GetServiceName(int Index, ReturnArg<String> Name) const;
 		uint8_t GetServiceType(int Index) const;
 		uint16_t GetLogoID(int Index) const;
+		int GetVideoAssetCount(int ServiceIndex) const;
+		bool GetVideoAssetInfo(int ServiceIndex, int AssetIndex, ReturnArg<AssetInfo> Info) const;
+		int GetVideoAssetIndexByComponentTag(int ServiceIndex, uint16_t ComponentTag) const;
+		int GetAudioAssetCount(int ServiceIndex) const;
+		bool GetAudioAssetInfo(int ServiceIndex, int AssetIndex, ReturnArg<AssetInfo> Info) const;
+		int GetAudioAssetIndexByComponentTag(int ServiceIndex, uint16_t ComponentTag) const;
 
 		uint16_t GetTLVStreamID() const;
 		uint16_t GetNetworkID() const;
@@ -217,6 +226,7 @@ namespace LibISDB
 		void GetSDTServiceInfo(const MHSDTTable *pSDTTable, int SDTIndex, ReturnArg<SDTServiceInfo> Info) const;
 		void ApplySDTServiceInfo(ServiceInfo *pServiceInfo, const MHSDTTable *pSDTTable, int SDTIndex) const;
 		void UpdateSDTStreamMap(const MHSDTTable *pSDTTable);
+		static int GetAssetIndexByComponentTag(const AssetInfoList &List, uint16_t ComponentTag);
 
 		struct NITInfo {
 			uint8_t BroadcastingFlag = 0;

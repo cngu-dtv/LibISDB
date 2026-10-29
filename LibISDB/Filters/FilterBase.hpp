@@ -72,6 +72,9 @@ namespace LibISDB
 		virtual void SetActiveServiceID(uint16_t ServiceID) {}
 		virtual void SetActiveVideoPID(uint16_t PID, bool ServiceChanged) {}
 		virtual void SetActiveAudioPID(uint16_t PID, bool ServiceChanged) {}
+		// MMT の映像・音声アセットの packet_id (TS の PID とは別に通知する)
+		virtual void SetActiveVideoPacketID(uint16_t PacketID, bool ServiceChanged) {}
+		virtual void SetActiveAudioPacketID(uint16_t PacketID, bool ServiceChanged) {}
 
 	protected:
 		bool OutputData(DataStream *pData, int OutputIndex = 0);

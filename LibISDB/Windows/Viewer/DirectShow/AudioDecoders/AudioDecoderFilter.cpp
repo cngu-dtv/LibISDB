@@ -1368,6 +1368,9 @@ AudioDecoder * AudioDecoderFilter::CreateDecoder(DecoderType Type)
 	case DecoderType::AAC:
 		return new AACDecoder_FAAD2;
 
+	case DecoderType::AAC_LATM:
+		return new AACDecoder_FAAD2(AACDecoder::TransportType::LATM);
+
 	case DecoderType::MPEGAudio:
 		return new MPEGAudioDecoder;
 
@@ -1377,6 +1380,9 @@ AudioDecoder * AudioDecoderFilter::CreateDecoder(DecoderType Type)
 #ifdef LIBISDB_HAS_FDK_AAC
 	case DecoderType::FDK_AAC:
 		return new AACDecoder_FDK;
+
+	case DecoderType::FDK_AAC_LATM:
+		return new AACDecoder_FDK(AACDecoder::TransportType::LATM);
 #endif
 
 	}
@@ -1392,6 +1398,7 @@ bool AudioDecoderFilter::GetDecoderVersion(DecoderType Type, std::string *pVersi
 
 	switch (Type) {
 	case DecoderType::AAC:
+	case DecoderType::AAC_LATM:
 		AACDecoder_FAAD2::GetVersion(pVersion);
 		return true;
 
@@ -1405,6 +1412,7 @@ bool AudioDecoderFilter::GetDecoderVersion(DecoderType Type, std::string *pVersi
 
 #ifdef LIBISDB_HAS_FDK_AAC
 	case DecoderType::FDK_AAC:
+	case DecoderType::FDK_AAC_LATM:
 		AACDecoder_FDK::GetVersion(pVersion);
 		return true;
 #endif

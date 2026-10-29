@@ -236,20 +236,29 @@ bool GetMHEventAudioList(const MMTDescriptorBlock *pDescBlock, ReturnArg<EventIn
 
 	pDescBlock->EnumDescriptors<MHAudioComponentDescriptor>(
 		[&](const MHAudioComponentDescriptor *pDesc) {
-			EventInfo::AudioInfo &Info = List->emplace_back();
-
-			Info.StreamContent = pDesc->GetStreamContent();
-			Info.ComponentType = pDesc->GetComponentType();
-			Info.ComponentTag = MMTComponentTagToComponentTag(pDesc->GetComponentTag());
-			Info.SimulcastGroupTag = pDesc->GetSimulcastGroupTag();
-			Info.ESMultiLingualFlag = pDesc->GetESMultiLingualFlag();
-			Info.MainComponentFlag = pDesc->GetMainComponentFlag();
-			Info.QualityIndicator = pDesc->GetQualityIndicator();
-			Info.SamplingRate = pDesc->GetSamplingRate();
-			Info.LanguageCode = pDesc->GetLanguageCode();
-			Info.LanguageCode2 = pDesc->GetLanguageCode2();
-			pDesc->GetText(&Info.Text);
+			GetMHAudioComponentInfo(pDesc, &List->emplace_back());
 		});
+
+	return true;
+}
+
+
+bool GetMHAudioComponentInfo(const MHAudioComponentDescriptor *pDesc, ReturnArg<EventInfo::AudioInfo> Info)
+{
+	if ((pDesc == nullptr) || !Info)
+		return false;
+
+	Info->StreamContent = pDesc->GetStreamContent();
+	Info->ComponentType = pDesc->GetComponentType();
+	Info->ComponentTag = MMTComponentTagToComponentTag(pDesc->GetComponentTag());
+	Info->SimulcastGroupTag = pDesc->GetSimulcastGroupTag();
+	Info->ESMultiLingualFlag = pDesc->GetESMultiLingualFlag();
+	Info->MainComponentFlag = pDesc->GetMainComponentFlag();
+	Info->QualityIndicator = pDesc->GetQualityIndicator();
+	Info->SamplingRate = pDesc->GetSamplingRate();
+	Info->LanguageCode = pDesc->GetLanguageCode();
+	Info->LanguageCode2 = pDesc->GetLanguageCode2();
+	pDesc->GetText(&Info->Text);
 
 	return true;
 }

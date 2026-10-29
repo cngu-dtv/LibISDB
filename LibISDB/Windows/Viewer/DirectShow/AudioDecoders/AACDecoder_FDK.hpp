@@ -46,7 +46,7 @@ namespace LibISDB::DirectShow
 		: public AACDecoder
 	{
 	public:
-		AACDecoder_FDK() noexcept;
+		AACDecoder_FDK(TransportType Transport = TransportType::ADTS) noexcept;
 		~AACDecoder_FDK();
 
 	// AudioDecoder
@@ -64,6 +64,8 @@ namespace LibISDB::DirectShow
 		bool OpenDecoder() override;
 		void CloseDecoder() override;
 		bool DecodeFrame(const ADTSFrame *pFrame, ReturnArg<DecodeFrameInfo> Info) override;
+		bool DecodeLATMFrame(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info) override;
+		bool DecodeData(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info);
 
 		HANDLE_AACDECODER m_hDecoder;
 		uint8_t m_LastChannelConfig;

@@ -35,7 +35,10 @@
 #include "DirectShow/ImageMixers/ImageMixer.hpp"
 #include "DirectShow/VideoParsers/VideoParser.hpp"
 #include "DirectShow/KnownDecoderManager.hpp"
+#include "../../MMT/MMTMediaReceiver.hpp"
+#include "../../TLV/StreamFormatDetector.hpp"
 #include <memory>
+#include <atomic>
 #include <bdaiface.h>
 
 
@@ -45,6 +48,7 @@ namespace LibISDB
 	namespace DirectShow
 	{
 		class TSSourceFilter;
+		class MMTSourceFilter;
 	}
 
 	/** ビューアフィルタクラス */
@@ -53,6 +57,7 @@ namespace LibISDB
 		, public DirectShow::FilterGraph
 		, protected DirectShow::AudioDecoderFilter::EventListener
 		, protected DirectShow::VideoParser::EventListener
+		, protected MMTMediaReceiver::Handler
 	{
 	public:
 		/** イベントリスナ */
@@ -76,6 +81,8 @@ namespace LibISDB
 			LPCWSTR pszVideoDecoder = nullptr;
 			DirectShow::FilterInfo AudioDevice;
 			std::vector<String> AudioFilterList;
+			// TLV の場合は MMT のアクセスユニットを直接出力するグラフを構築する
+			StreamFormat Format = StreamFormat::TS;
 		};
 
 		struct ClippingInfo {
@@ -124,6 +131,8 @@ namespace LibISDB
 		void Reset() override;
 		void SetActiveVideoPID(uint16_t PID, bool ServiceChanged) override;
 		void SetActiveAudioPID(uint16_t PID, bool ServiceChanged) override;
+		void SetActiveVideoPacketID(uint16_t PacketID, bool ServiceChanged) override;
+		void SetActiveAudioPacketID(uint16_t PacketID, bool ServiceChanged) override;
 
 	// SingleInputFilter
 		bool ProcessData(DataStream *pData) override;
@@ -153,6 +162,10 @@ namespace LibISDB
 
 		uint16_t GetVideoPID() const;
 		uint16_t GetAudioPID() const;
+		uint16_t GetVideoPacketID() const;
+		uint16_t GetAudioPacketID() const;
+		// 構築したグラフの形式
+		StreamFormat GetStreamFormat() const noexcept { return m_StreamFormat; }
 
 		bool SetViewSize(int Width, int Height);
 		bool GetVideoSize(ReturnArg<int> Width, ReturnArg<int> Height) const;
@@ -206,6 +219,8 @@ namespace LibISDB
 		bool SetAACDecoderType(AACDecoderType Type);
 		static LPCTSTR GetAACDecoderName(AACDecoderType Type);
 		static bool GetAACDecoderVersion(AACDecoderType Type, std::string *pVersion);
+		// MH-音声コンポーネント記述子の stream_content と component_type の音声を再生できるか
+		bool IsMMTAudioPlayable(uint8_t StreamContent, uint8_t ComponentType) const noexcept;
 
 		bool GetVideoDecoderName(String *pName) const;
 		bool GetVideoRendererName(String *pName) const;
@@ -235,6 +250,9 @@ namespace LibISDB
 		bool SetInitialPoolPercentage(int Percentage);
 		int GetBufferFillPercentage() const;
 		bool SetPacketInputWait(DWORD Wait);
+		// MMT の場合の、NTP の時刻と提示時刻の間の遅延
+		bool SetMMTPresentationDelay(LONGLONG Delay);
+		LONGLONG GetMMTPresentationDelay() const noexcept { return m_MMTPresentationDelay; }
 
 	protected:
 		bool AdjustVideoPosition();
@@ -248,6 +266,9 @@ namespace LibISDB
 		bool MapAudioPID(uint16_t PID);
 		void ApplyAdjustVideoSampleOptions();
 		void SetAudioDecoderType(BYTE StreamType);
+		void OpenMMTSourceFilter(
+			const OpenSettings &Settings, bool NoVideo,
+			COMPointer<IPin> *pVideoPin, COMPointer<IPin> *pAudioPin);
 
 	// AudioDecoderFilter::EventListener
 		void OnSPDIFPassthroughError(HRESULT hr) override;
@@ -255,10 +276,18 @@ namespace LibISDB
 	// VideoParser::EventListener
 		void OnVideoInfoUpdated(const DirectShow::VideoParser::VideoInfo &Info) override;
 
+	// MMTMediaReceiver::Handler
+		void OnAccessUnit(
+			const MMTMediaReceiver *pReceiver, MMTMediaReceiver::MediaType Type,
+			const MPUAssembler::AccessUnitInfo &Info) override;
+
 		bool m_IsOpen;
 
 		// ソースフィルタ
 		COMPointer<DirectShow::TSSourceFilter> m_SourceFilter;
+		COMPointer<DirectShow::MMTSourceFilter> m_MMTSourceFilter;
+		MMTMediaReceiver m_MMTReceiver;
+		StreamFormat m_StreamFormat;
 		// 映像デコーダ
 		COMPointer<IBaseFilter> m_VideoDecoderFilter;
 		// 音声デコーダ
@@ -291,7 +320,7 @@ namespace LibISDB
 
 		mutable MutexLock m_ResizeLock;
 		DirectShow::VideoRenderer::RendererType m_VideoRendererType;
-		AACDecoderType m_AACDecoderType;
+		std::atomic<AACDecoderType> m_AACDecoderType;
 		String m_VideoDecoderName;
 		String m_AudioRendererName;
 		uint8_t m_VideoStreamType;
@@ -312,6 +341,9 @@ namespace LibISDB
 		size_t m_BufferSize;
 		int m_InitialPoolPercentage;
 		DWORD m_PacketInputWait;
+		LONGLONG m_MMTPresentationDelay;
+		// 音声デコーダが無い間も保持する (既定の音声の選択でストリーミングスレッドから参照する)
+		std::atomic<bool> m_DownMixSurround;
 		EventListenerList<EventListener> m_EventListenerList;
 		DirectShow::VideoParser::StreamCallback *m_pVideoStreamCallback;
 		DirectShow::AudioDecoderFilter::SampleCallback *m_pAudioSampleCallback;

@@ -26,11 +26,157 @@
 
 #include "../LibISDBPrivate.hpp"
 #include "TSEngine.hpp"
+#include "../MMT/MMTConsts.hpp"
 #include "../Base/DebugDef.hpp"
 
 
 namespace LibISDB
 {
+
+
+class TSEngine::TSServiceSource
+	: public TSEngine::ServiceSource
+{
+public:
+	TSServiceSource(const AnalyzerFilter *pAnalyzer) noexcept : m_pAnalyzer(pAnalyzer) {}
+
+	bool IsMMT() const noexcept override { return false; }
+	uint16_t GetInvalidStreamID() const noexcept override { return PID_INVALID; }
+	uint16_t GetStreamID() const override { return m_pAnalyzer->GetTransportStreamID(); }
+	uint16_t GetNetworkID() const override { return m_pAnalyzer->GetNetworkID(); }
+
+	int GetServiceCount() const override { return m_pAnalyzer->GetServiceCount(); }
+	uint16_t GetServiceID(int Index) const override { return m_pAnalyzer->GetServiceID(Index); }
+	int GetServiceIndexByID(uint16_t ServiceID) const override { return m_pAnalyzer->GetServiceIndexByID(ServiceID); }
+	bool IsServiceInfoAcquired(int Index) const override { return m_pAnalyzer->IsServicePMTAcquired(Index); }
+	bool Is1SegStream() const override { return m_pAnalyzer->Is1SegStream(); }
+	bool Is1SegService(int Index) const override { return m_pAnalyzer->Is1SegService(Index); }
+	uint16_t Get1SegServiceIDByIndex(int Index) const override { return m_pAnalyzer->Get1SegServiceIDByIndex(Index); }
+	uint16_t GetFirst1SegServiceID() const override { return m_pAnalyzer->GetFirst1SegServiceID(); }
+
+	int GetVideoStreamCount(int ServiceIndex) const override { return m_pAnalyzer->GetVideoESCount(ServiceIndex); }
+	uint16_t GetVideoStreamID(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetVideoESPID(ServiceIndex, StreamIndex); }
+	uint8_t GetVideoStreamType(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetVideoStreamType(ServiceIndex, StreamIndex); }
+	uint8_t GetVideoComponentTag(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetVideoComponentTag(ServiceIndex, StreamIndex); }
+	int GetVideoIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const override { return m_pAnalyzer->GetVideoIndexByComponentTag(ServiceIndex, ComponentTag); }
+
+	int GetAudioStreamCount(int ServiceIndex) const override { return m_pAnalyzer->GetAudioESCount(ServiceIndex); }
+	uint16_t GetAudioStreamID(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetAudioESPID(ServiceIndex, StreamIndex); }
+	uint8_t GetAudioStreamType(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetAudioStreamType(ServiceIndex, StreamIndex); }
+	uint8_t GetAudioComponentTag(int ServiceIndex, int StreamIndex) const override { return m_pAnalyzer->GetAudioComponentTag(ServiceIndex, StreamIndex); }
+	int GetAudioIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const override { return m_pAnalyzer->GetAudioIndexByComponentTag(ServiceIndex, ComponentTag); }
+
+	uint16_t GetEventID(int ServiceIndex) const override { return m_pAnalyzer->GetEventID(ServiceIndex); }
+
+private:
+	const AnalyzerFilter *m_pAnalyzer;
+};
+
+
+class TSEngine::MMTServiceSource
+	: public TSEngine::ServiceSource
+{
+public:
+	MMTServiceSource(const MMTAnalyzerFilter *pAnalyzer) noexcept : m_pAnalyzer(pAnalyzer) {}
+
+	bool IsMMT() const noexcept override { return true; }
+	uint16_t GetInvalidStreamID() const noexcept override { return MMT_PACKET_ID_INVALID; }
+	uint16_t GetStreamID() const override { return m_pAnalyzer->GetTLVStreamID(); }
+	uint16_t GetNetworkID() const override { return m_pAnalyzer->GetNetworkID(); }
+
+	int GetServiceCount() const override { return m_pAnalyzer->GetServiceCount(); }
+	uint16_t GetServiceID(int Index) const override { return m_pAnalyzer->GetServiceID((Index < 0) ? 0 : Index); }
+	int GetServiceIndexByID(uint16_t ServiceID) const override { return m_pAnalyzer->GetServiceIndexByID(ServiceID); }
+	bool IsServiceInfoAcquired(int Index) const override { return m_pAnalyzer->IsServiceMPTAcquired(Index); }
+
+	int GetVideoStreamCount(int ServiceIndex) const override { return m_pAnalyzer->GetVideoAssetCount(ServiceIndex); }
+
+	uint16_t GetVideoStreamID(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetVideoAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return MMT_PACKET_ID_INVALID;
+		return Info.PacketID;
+	}
+
+	uint8_t GetVideoStreamType(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetVideoAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return STREAM_TYPE_INVALID;
+		switch (Info.AssetType) {
+		case MMT_ASSET_TYPE_HEV1:
+		case MMT_ASSET_TYPE_HVC1:
+			return STREAM_TYPE_H265;
+		}
+		return STREAM_TYPE_INVALID;
+	}
+
+	uint8_t GetVideoComponentTag(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetVideoAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return COMPONENT_TAG_INVALID;
+		return ToComponentTag8(Info.ComponentTag);
+	}
+
+	int GetVideoIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const override
+	{
+		return m_pAnalyzer->GetVideoAssetIndexByComponentTag(ServiceIndex, ComponentTag);
+	}
+
+	int GetAudioStreamCount(int ServiceIndex) const override { return m_pAnalyzer->GetAudioAssetCount(ServiceIndex); }
+
+	uint16_t GetAudioStreamID(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetAudioAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return MMT_PACKET_ID_INVALID;
+		return Info.PacketID;
+	}
+
+	uint8_t GetAudioStreamType(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetAudioAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return STREAM_TYPE_INVALID;
+		return Info.StreamType;
+	}
+
+	uint8_t GetAudioComponentTag(int ServiceIndex, int StreamIndex) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Info;
+		if (!m_pAnalyzer->GetAudioAssetInfo(ServiceIndex, StreamIndex, &Info))
+			return COMPONENT_TAG_INVALID;
+		return ToComponentTag8(Info.ComponentTag);
+	}
+
+	int GetAudioIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const override
+	{
+		return m_pAnalyzer->GetAudioAssetIndexByComponentTag(ServiceIndex, ComponentTag);
+	}
+
+	bool GetAudioComponentInfo(int ServiceIndex, int StreamIndex, ReturnArg<EventInfo::AudioInfo> Info) const override
+	{
+		MMTAnalyzerFilter::AssetInfo Asset;
+		if (!Info || !m_pAnalyzer->GetAudioAssetInfo(ServiceIndex, StreamIndex, &Asset) || !Asset.HasAudioInfo)
+			return false;
+		*Info = Asset.AudioInfo;
+		return true;
+	}
+
+	uint16_t GetEventID(int ServiceIndex) const override { return m_pAnalyzer->GetEventID(ServiceIndex); }
+
+private:
+	static uint8_t ToComponentTag8(uint16_t ComponentTag) noexcept
+	{
+		return (ComponentTag < COMPONENT_TAG_INVALID) ? static_cast<uint8_t>(ComponentTag) : COMPONENT_TAG_INVALID;
+	}
+
+	const MMTAnalyzerFilter *m_pAnalyzer;
+};
+
+
 
 
 TSEngine::TSEngine() noexcept
@@ -39,6 +185,9 @@ TSEngine::TSEngine() noexcept
 	, m_pSource(nullptr)
 	, m_pAnalyzer(nullptr)
 	, m_pStreamParser(nullptr)
+	, m_pMMTAnalyzer(nullptr)
+	, m_IsMMTStreamStarted(false)
+	, m_LastStreamFormat(StreamFormat::Unknown)
 
 	, m_CurTransportStreamID(TRANSPORT_STREAM_ID_INVALID)
 	, m_CurServiceID(SERVICE_ID_INVALID)
@@ -246,7 +395,8 @@ bool TSEngine::SetService(const ServiceSelectInfo &ServiceSelInfo, bool Reserve)
 {
 	BlockLock Lock(m_EngineLock);
 
-	if (LIBISDB_TRACE_ERROR_IF(m_pAnalyzer == nullptr))
+	const ServiceSource *pSource = GetServiceSource();
+	if (LIBISDB_TRACE_ERROR_IF(pSource == nullptr))
 		return false;
 
 	uint16_t ServiceID = ServiceSelInfo.ServiceID;
@@ -261,11 +411,11 @@ bool TSEngine::SetService(const ServiceSelectInfo &ServiceSelInfo, bool Reserve)
 		// ワンセグ優先
 		uint16_t SID;
 		if ((ServiceSelInfo.PreferredServiceIndex >= 0)
-				&& (SID = m_pAnalyzer->Get1SegServiceIDByIndex(
+				&& (SID = pSource->Get1SegServiceIDByIndex(
 						ServiceSelInfo.PreferredServiceIndex)) != SERVICE_ID_INVALID) {
 			OneSeg = true;
 			ServiceID = SID;
-		} else if ((SID = m_pAnalyzer->GetFirst1SegServiceID()) != SERVICE_ID_INVALID) {
+		} else if ((SID = pSource->GetFirst1SegServiceID()) != SERVICE_ID_INVALID) {
 			OneSeg = true;
 			ServiceID = SID;
 		}
@@ -295,6 +445,10 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 
 	BlockLock Lock(m_EngineLock);
 
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
+		return false;
+
 	// サービス変更(ServiceID==SERVICE_ID_INVALIDならPAT先頭サービス)
 
 	if (ServiceID == SERVICE_ID_INVALID) {
@@ -305,7 +459,7 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 			LIBISDB_TRACE(LIBISDB_STR("No viewable service\n"));
 			return false;
 		}
-		if (No1Seg && m_pAnalyzer->Is1SegService(m_pAnalyzer->GetServiceIndexByID(ServiceID))) {
+		if (No1Seg && pSource->Is1SegService(pSource->GetServiceIndexByID(ServiceID))) {
 			return false;
 		}
 	} else {
@@ -316,7 +470,8 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 	}
 
 	const bool ServiceChanged = (ServiceID != m_CurServiceID);
-	const int CurServiceIndex = m_pAnalyzer->GetServiceIndexByID(ServiceID);
+	const int CurServiceIndex = pSource->GetServiceIndexByID(ServiceID);
+	const uint16_t InvalidStreamID = pSource->GetInvalidStreamID();
 
 	m_CurServiceID = ServiceID;
 
@@ -325,39 +480,50 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 	int VideoIndex;
 	if (m_CurVideoComponentTag != COMPONENT_TAG_INVALID
 			/* && !ServiceChanged */) {
-		VideoIndex = m_pAnalyzer->GetVideoIndexByComponentTag(CurServiceIndex, m_CurVideoComponentTag);
+		VideoIndex = pSource->GetVideoIndexByComponentTag(CurServiceIndex, m_CurVideoComponentTag);
 		if (VideoIndex < 0)
 			VideoIndex = 0;
 	} else {
 		VideoIndex = 0;
 	}
-	uint16_t VideoPID = m_pAnalyzer->GetVideoESPID(CurServiceIndex, VideoIndex);
-	if ((VideoPID == PID_INVALID) && (VideoIndex != 0)) {
-		VideoPID = m_pAnalyzer->GetVideoESPID(CurServiceIndex, 0);
+	uint16_t VideoID = pSource->GetVideoStreamID(CurServiceIndex, VideoIndex);
+	if ((VideoID == InvalidStreamID) && (VideoIndex != 0)) {
+		VideoID = pSource->GetVideoStreamID(CurServiceIndex, 0);
 		VideoIndex = 0;
 	}
 	m_CurVideoStream = VideoIndex;
-	m_CurVideoComponentTag = m_pAnalyzer->GetVideoComponentTag(CurServiceIndex, VideoIndex);
-	const uint8_t VideoStreamType = m_pAnalyzer->GetVideoStreamType(CurServiceIndex, VideoIndex);
+	m_CurVideoComponentTag = pSource->GetVideoComponentTag(CurServiceIndex, VideoIndex);
+	const uint8_t VideoStreamType = pSource->GetVideoStreamType(CurServiceIndex, VideoIndex);
 	LIBISDB_TRACE(LIBISDB_STR("Select video : [{}] (component_tag {:02X})\n"), m_CurVideoStream, m_CurVideoComponentTag);
 
 	int AudioIndex;
-	if (m_CurAudioComponentTag != COMPONENT_TAG_INVALID
+	if (pSource->IsMMT()) {
+		EventInfo::AudioInfoList AudioList;
+		GetAudioComponentList(pSource, CurServiceIndex, &AudioList);
+		// 選局時と、サイマル・多言語の条件が変わった時は既定の音声にする (ARIB TR-B39 第1部 第2編 4.7.2 図 4-2)
+		const bool AudioChanged = ServiceChanged || (AudioList != m_AudioComponentList);
+		m_AudioComponentList = std::move(AudioList);
+		AudioIndex = -1;
+		if (!AudioChanged && (m_CurAudioComponentTag != COMPONENT_TAG_INVALID))
+			AudioIndex = pSource->GetAudioIndexByComponentTag(CurServiceIndex, m_CurAudioComponentTag);
+		if (AudioIndex < 0)
+			AudioIndex = GetDefaultAudioStreamIndex(pSource, CurServiceIndex);
+	} else if (m_CurAudioComponentTag != COMPONENT_TAG_INVALID
 			/* && !ServiceChanged */) {
-		AudioIndex = m_pAnalyzer->GetAudioIndexByComponentTag(CurServiceIndex, m_CurAudioComponentTag);
+		AudioIndex = pSource->GetAudioIndexByComponentTag(CurServiceIndex, m_CurAudioComponentTag);
 		if (AudioIndex < 0)
 			AudioIndex = 0;
 	} else {
 		AudioIndex = 0;
 	}
-	uint16_t AudioPID = m_pAnalyzer->GetAudioESPID(CurServiceIndex, AudioIndex);
-	if ((AudioPID == PID_INVALID) && (AudioIndex != 0)) {
-		AudioPID = m_pAnalyzer->GetAudioESPID(CurServiceIndex, 0);
+	uint16_t AudioID = pSource->GetAudioStreamID(CurServiceIndex, AudioIndex);
+	if ((AudioID == InvalidStreamID) && (AudioIndex != 0)) {
+		AudioID = pSource->GetAudioStreamID(CurServiceIndex, 0);
 		AudioIndex = 0;
 	}
 	m_CurAudioStream = AudioIndex;
-	m_CurAudioComponentTag = m_pAnalyzer->GetAudioComponentTag(CurServiceIndex, AudioIndex);
-	const uint8_t AudioStreamType = m_pAnalyzer->GetAudioStreamType(CurServiceIndex, AudioIndex);
+	m_CurAudioComponentTag = pSource->GetAudioComponentTag(CurServiceIndex, AudioIndex);
+	const uint8_t AudioStreamType = pSource->GetAudioStreamType(CurServiceIndex, AudioIndex);
 	LIBISDB_TRACE(LIBISDB_STR("Select audio : [{}] (component_tag {:02X})\n"), m_CurAudioStream, m_CurAudioComponentTag);
 
 	if (m_VideoStreamType != VideoStreamType) {
@@ -375,8 +541,8 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 	m_FilterGraph.WalkGraph(
 		[ServiceID](FilterBase *pFilter) { pFilter->SetActiveServiceID(ServiceID); });
 
-	SetVideoPID(VideoPID, true);
-	SetAudioPID(AudioPID, true);
+	SetVideoStreamID(VideoID, true);
+	SetAudioStreamID(AudioID, true);
 
 #if 0
 	if (m_WriteCurServiceOnly)
@@ -386,7 +552,7 @@ bool TSEngine::SelectService(uint16_t ServiceID, bool No1Seg)
 	if (ServiceChanged)
 		OnServiceChanged(ServiceID);
 
-	const uint16_t EventID = m_pAnalyzer->GetEventID(CurServiceIndex);
+	const uint16_t EventID = pSource->GetEventID(CurServiceIndex);
 	if (ServiceChanged || (m_CurEventID != EventID)) {
 		m_CurEventID = EventID;
 		OnEventChanged(EventID);
@@ -404,9 +570,10 @@ uint16_t TSEngine::GetServiceID() const
 
 int TSEngine::GetServiceIndex() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return -1;
-	return m_pAnalyzer->GetServiceIndexByID(m_CurServiceID);
+	return pSource->GetServiceIndexByID(m_CurServiceID);
 }
 
 
@@ -429,9 +596,10 @@ uint16_t TSEngine::GetTransportStreamID() const
 
 uint16_t TSEngine::GetNetworkID() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return NETWORK_ID_INVALID;
-	return m_pAnalyzer->GetNetworkID();
+	return pSource->GetNetworkID();
 }
 
 
@@ -460,7 +628,8 @@ int TSEngine::GetVideoStreamCount(int ServiceIndex) const
 {
 	BlockLock Lock(m_EngineLock);
 
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return 0;
 
 	uint16_t ServiceID;
@@ -474,7 +643,7 @@ int TSEngine::GetVideoStreamCount(int ServiceIndex) const
 	if (ServiceID == SERVICE_ID_INVALID)
 		return 0;
 
-	return m_pAnalyzer->GetVideoESCount(m_pAnalyzer->GetServiceIndexByID(ServiceID));
+	return pSource->GetVideoStreamCount(pSource->GetServiceIndexByID(ServiceID));
 }
 
 
@@ -482,23 +651,24 @@ bool TSEngine::SetVideoStream(int StreamIndex)
 {
 	BlockLock Lock(m_EngineLock);
 
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return false;
 
 	const int ServiceIndex = GetServiceIndex();
 	if (ServiceIndex < 0)
 		return false;
 
-	const uint16_t VideoPID = m_pAnalyzer->GetVideoESPID(ServiceIndex, StreamIndex);
-	if (VideoPID == PID_INVALID)
+	const uint16_t VideoID = pSource->GetVideoStreamID(ServiceIndex, StreamIndex);
+	if (VideoID == pSource->GetInvalidStreamID())
 		return false;
 
 	m_CurVideoStream = StreamIndex;
-	m_CurVideoComponentTag = m_pAnalyzer->GetVideoComponentTag(ServiceIndex, StreamIndex);
+	m_CurVideoComponentTag = pSource->GetVideoComponentTag(ServiceIndex, StreamIndex);
 
 	LIBISDB_TRACE(LIBISDB_STR("Select video : [{}] (component_tag {:02X})\n"), m_CurVideoStream, m_CurVideoComponentTag);
 
-	const uint8_t VideoStreamType = m_pAnalyzer->GetVideoStreamType(ServiceIndex, StreamIndex);
+	const uint8_t VideoStreamType = pSource->GetVideoStreamType(ServiceIndex, StreamIndex);
 
 	if (m_VideoStreamType != VideoStreamType) {
 		LIBISDB_TRACE(LIBISDB_STR("Video stream_type changed ({:02x} -> {:02x})\n"), m_VideoStreamType, VideoStreamType);
@@ -506,7 +676,7 @@ bool TSEngine::SetVideoStream(int StreamIndex)
 		OnVideoStreamTypeChanged(VideoStreamType);
 	}
 
-	SetVideoPID(VideoPID, false);
+	SetVideoStreamID(VideoID, false);
 
 	return true;
 }
@@ -534,7 +704,8 @@ int TSEngine::GetAudioStreamCount(int ServiceIndex) const
 {
 	BlockLock Lock(m_EngineLock);
 
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return 0;
 
 	uint16_t ServiceID;
@@ -548,7 +719,7 @@ int TSEngine::GetAudioStreamCount(int ServiceIndex) const
 	if (ServiceID == SERVICE_ID_INVALID)
 		return 0;
 
-	return m_pAnalyzer->GetAudioESCount(m_pAnalyzer->GetServiceIndexByID(ServiceID));
+	return pSource->GetAudioStreamCount(pSource->GetServiceIndexByID(ServiceID));
 }
 
 
@@ -556,25 +727,26 @@ bool TSEngine::SetAudioStream(int StreamIndex)
 {
 	BlockLock Lock(m_EngineLock);
 
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return false;
 
 	const int ServiceIndex = GetServiceIndex();
 	if (ServiceIndex < 0)
 		return false;
 
-	const uint16_t AudioPID = m_pAnalyzer->GetAudioESPID(ServiceIndex, StreamIndex);
-	if (AudioPID == PID_INVALID)
+	const uint16_t AudioID = pSource->GetAudioStreamID(ServiceIndex, StreamIndex);
+	if (AudioID == pSource->GetInvalidStreamID())
 		return false;
 
 	m_CurAudioStream = StreamIndex;
-	m_CurAudioComponentTag = m_pAnalyzer->GetAudioComponentTag(ServiceIndex, StreamIndex);
+	m_CurAudioComponentTag = pSource->GetAudioComponentTag(ServiceIndex, StreamIndex);
 
 	LIBISDB_TRACE(LIBISDB_STR("Select audio : [{}] (component_tag {:02X})\n"), m_CurAudioStream, m_CurAudioComponentTag);
 
-	SetAudioPID(AudioPID, false);
+	SetAudioStreamID(AudioID, false);
 
-	const uint8_t AudioStreamType = m_pAnalyzer->GetAudioStreamType(ServiceIndex, StreamIndex);
+	const uint8_t AudioStreamType = pSource->GetAudioStreamType(ServiceIndex, StreamIndex);
 
 	if (m_AudioStreamType != AudioStreamType) {
 		LIBISDB_TRACE(LIBISDB_STR("Audio stream_type changed ({:02x} -> {:02x})\n"), m_AudioStreamType, AudioStreamType);
@@ -595,6 +767,54 @@ int TSEngine::GetAudioStream() const
 uint8_t TSEngine::GetAudioComponentTag() const
 {
 	return m_CurAudioComponentTag;
+}
+
+
+bool TSEngine::GetAudioComponentInfo(int StreamIndex, ReturnArg<EventInfo::AudioInfo> Info) const
+{
+	BlockLock Lock(m_EngineLock);
+
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
+		return false;
+
+	const int ServiceIndex = GetServiceIndex();
+	if (ServiceIndex < 0)
+		return false;
+
+	return pSource->GetAudioComponentInfo(ServiceIndex, StreamIndex, Info);
+}
+
+
+bool TSEngine::IsAudioStreamPlayable(int StreamIndex) const
+{
+	BlockLock Lock(m_EngineLock);
+
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
+		return false;
+
+	const int ServiceIndex = GetServiceIndex();
+	if ((ServiceIndex < 0) || (StreamIndex < 0) || (StreamIndex >= pSource->GetAudioStreamCount(ServiceIndex)))
+		return false;
+
+	return IsAudioStreamPlayable(pSource, ServiceIndex, StreamIndex);
+}
+
+
+int TSEngine::GetDefaultAudioStream() const
+{
+	BlockLock Lock(m_EngineLock);
+
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
+		return -1;
+
+	const int ServiceIndex = GetServiceIndex();
+	if ((ServiceIndex < 0) || (pSource->GetAudioStreamCount(ServiceIndex) <= 0))
+		return -1;
+
+	return GetDefaultAudioStreamIndex(pSource, ServiceIndex);
 }
 
 
@@ -632,9 +852,133 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 	LIBISDB_TRACE(LIBISDB_STR("TSEngine::OnPATUpdated()\n"));
 
 	BlockLock Lock(m_EngineLock);
-	const uint16_t TransportStreamID = pAnalyzer->GetTransportStreamID();
 
-	if (m_CurTransportStreamID != TransportStreamID) {
+	if (!IsMMTStream())
+		UpdateService(m_TSServiceSource.get());
+}
+
+
+void TSEngine::OnPMTUpdated(AnalyzerFilter *pAnalyzer, uint16_t ServiceID)
+{
+	OnPATUpdated(pAnalyzer);
+}
+
+
+void TSEngine::OnEITUpdated(AnalyzerFilter *pAnalyzer)
+{
+	if (!IsMMTStream())
+		UpdateEvent(m_TSServiceSource.get());
+}
+
+
+void TSEngine::OnStreamFormatChanged(StreamPacketParserFilter *pParser, StreamFormat Format)
+{
+	LIBISDB_TRACE(LIBISDB_STR("TSEngine::OnStreamFormatChanged() : {}\n"), static_cast<int>(Format));
+
+	BlockLock Lock(m_EngineLock);
+
+	const StreamFormat LastFormat = m_LastStreamFormat;
+	m_LastStreamFormat = Format;
+	// 最初の判定の時点では何も選択されていない
+	if ((LastFormat == StreamFormat::Unknown) || (Format == LastFormat))
+		return;
+
+	ResetStatus();
+
+	m_CurVideoStream = -1;
+	m_CurVideoComponentTag = COMPONENT_TAG_INVALID;
+	m_CurAudioStream = -1;
+	m_CurAudioComponentTag = COMPONENT_TAG_INVALID;
+	m_CurEventID = EVENT_ID_INVALID;
+
+	// stream_type の変化を通知させ、ビューアを新しい形式で構築し直させる
+	m_VideoStreamType = STREAM_TYPE_UNINITIALIZED;
+	m_AudioStreamType = STREAM_TYPE_UNINITIALIZED;
+
+	m_FilterGraph.WalkGraph(
+		[](FilterBase *pFilter) {
+			pFilter->SetActiveVideoPID(PID_INVALID, true);
+			pFilter->SetActiveAudioPID(PID_INVALID, true);
+			pFilter->SetActiveVideoPacketID(MMT_PACKET_ID_INVALID, true);
+			pFilter->SetActiveAudioPacketID(MMT_PACKET_ID_INVALID, true);
+		});
+}
+
+
+void TSEngine::OnPLTUpdated(MMTAnalyzerFilter *pAnalyzer)
+{
+	LIBISDB_TRACE(LIBISDB_STR("TSEngine::OnPLTUpdated()\n"));
+
+	BlockLock Lock(m_EngineLock);
+
+	if (IsMMTStream())
+		UpdateService(m_MMTServiceSource.get());
+}
+
+
+void TSEngine::OnMPTUpdated(MMTAnalyzerFilter *pAnalyzer, uint16_t ServiceID)
+{
+	OnPLTUpdated(pAnalyzer);
+}
+
+
+void TSEngine::OnMHSDTUpdated(MMTAnalyzerFilter *pAnalyzer)
+{
+	BlockLock Lock(m_EngineLock);
+
+	// tlv_stream_id は MH-SDT で分かる
+	if (IsMMTStream() && m_IsMMTStreamStarted
+			&& (m_CurTransportStreamID == TRANSPORT_STREAM_ID_INVALID)) {
+		m_CurTransportStreamID = pAnalyzer->GetTLVStreamID();
+		LIBISDB_TRACE(LIBISDB_STR("tlv_stream_id {:04X}\n"), m_CurTransportStreamID);
+	}
+}
+
+
+void TSEngine::OnMHEITUpdated(MMTAnalyzerFilter *pAnalyzer)
+{
+	if (IsMMTStream())
+		UpdateEvent(m_MMTServiceSource.get());
+}
+
+
+const TSEngine::ServiceSource * TSEngine::GetServiceSource() const
+{
+	if (IsMMTStream())
+		return m_MMTServiceSource.get();
+	return m_TSServiceSource.get();
+}
+
+
+bool TSEngine::IsMMTStream() const
+{
+	return (m_pMMTAnalyzer != nullptr) && (GetStreamFormat() == StreamFormat::TLV);
+}
+
+
+void TSEngine::UpdateService(const ServiceSource *pSource)
+{
+	if (pSource == nullptr)
+		return;
+
+	const uint16_t TransportStreamID = pSource->GetStreamID();
+	bool NewStream;
+
+	if (pSource->IsMMT()) {
+		// 最初の PLT の時点では tlv_stream_id が分からないことがある
+		NewStream =
+			!m_IsMMTStreamStarted
+			|| ((TransportStreamID != TRANSPORT_STREAM_ID_INVALID)
+				&& (m_CurTransportStreamID != TRANSPORT_STREAM_ID_INVALID)
+				&& (TransportStreamID != m_CurTransportStreamID));
+		m_IsMMTStreamStarted = true;
+		if (!NewStream && (TransportStreamID != TRANSPORT_STREAM_ID_INVALID))
+			m_CurTransportStreamID = TransportStreamID;
+	} else {
+		NewStream = (m_CurTransportStreamID != TransportStreamID);
+	}
+
+	if (NewStream) {
 		// ストリームIDが変わっているなら初期化
 		LIBISDB_TRACE(LIBISDB_STR("Stream changed ({:04X} <- {:04X})\n"), TransportStreamID, m_CurTransportStreamID);
 
@@ -655,7 +999,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 			SetService = false;
 		} else if (m_ServiceSel.ServiceID != SERVICE_ID_INVALID) {
 			// サービスが指定されている
-			const int ServiceIndex = pAnalyzer->GetServiceIndexByID(m_ServiceSel.ServiceID);
+			const int ServiceIndex = pSource->GetServiceIndexByID(m_ServiceSel.ServiceID);
 			if (ServiceIndex < 0) {
 				// サービスがPATにない
 				LIBISDB_TRACE(LIBISDB_STR("Specified service_id {:04X} not found in PAT\n"), m_ServiceSel.ServiceID);
@@ -670,8 +1014,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 		}
 
 		if (!SetService || !SelectService(ServiceID, m_ServiceSel.OneSegSelect == OneSegSelectType::Refuse)) {
-			SetVideoPID(PID_INVALID, true);
-			SetAudioPID(PID_INVALID, true);
+			ResetVideoAndAudioStreamID(true);
 		}
 	} else {
 		bool SetService = true, OneSeg = false;
@@ -681,18 +1024,18 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 			// ワンセグ優先
 			uint16_t SID;
 			if (m_ServiceSel.PreferredServiceIndex >= 0) {
-				SID = pAnalyzer->Get1SegServiceIDByIndex(m_ServiceSel.PreferredServiceIndex);
+				SID = pSource->Get1SegServiceIDByIndex(m_ServiceSel.PreferredServiceIndex);
 				if (SID != SERVICE_ID_INVALID) {
 					OneSeg = true;
-					if (pAnalyzer->IsServicePMTAcquired(pAnalyzer->GetServiceIndexByID(SID))) {
+					if (pSource->IsServiceInfoAcquired(pSource->GetServiceIndexByID(SID))) {
 						ServiceID = SID;
 					}
 				}
 			}
 			if ((ServiceID == SERVICE_ID_INVALID)
-					&& ((SID = pAnalyzer->GetFirst1SegServiceID()) != SERVICE_ID_INVALID)) {
+					&& ((SID = pSource->GetFirst1SegServiceID()) != SERVICE_ID_INVALID)) {
 				OneSeg = true;
-				if (pAnalyzer->IsServicePMTAcquired(pAnalyzer->GetServiceIndexByID(SID))) {
+				if (pSource->IsServiceInfoAcquired(pSource->GetServiceIndexByID(SID))) {
 					ServiceID = SID;
 				} else {
 					SetService = false;
@@ -701,7 +1044,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 		}
 
 		if (!OneSeg && (m_ServiceSel.ServiceID != SERVICE_ID_INVALID)) {
-			const int ServiceIndex = pAnalyzer->GetServiceIndexByID(m_ServiceSel.ServiceID);
+			const int ServiceIndex = pSource->GetServiceIndexByID(m_ServiceSel.ServiceID);
 			if (ServiceIndex < 0) {
 				LIBISDB_TRACE(LIBISDB_STR("Specified service_id {:04X} not found in PAT\n"), m_ServiceSel.ServiceID);
 				if (((m_CurServiceID == SERVICE_ID_INVALID) && !m_ServiceSel.FollowViewableService)
@@ -712,7 +1055,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 				if (GetSelectableServiceIndexByID(m_ServiceSel.ServiceID) >= 0) {
 					ServiceID = m_ServiceSel.ServiceID;
 				} else if (((m_CurServiceID == SERVICE_ID_INVALID) && !m_ServiceSel.FollowViewableService)
-						|| !pAnalyzer->IsServicePMTAcquired(ServiceIndex)) {
+						|| !pSource->IsServiceInfoAcquired(ServiceIndex)) {
 					// サービスはPATにあるが、まだPMTが来ていない
 					SetService = false;
 				}
@@ -720,7 +1063,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 		}
 
 		if (SetService && (ServiceID == SERVICE_ID_INVALID) && (m_CurServiceID != SERVICE_ID_INVALID)) {
-			const int ServiceIndex = pAnalyzer->GetServiceIndexByID(m_CurServiceID);
+			const int ServiceIndex = pSource->GetServiceIndexByID(m_CurServiceID);
 			if (ServiceIndex < 0) {
 				// サービスがPATにない
 				LIBISDB_TRACE(LIBISDB_STR("Current service_id {:04X} not found in PAT\n"), m_CurServiceID);
@@ -735,7 +1078,7 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 				if (GetSelectableServiceIndexByID(m_CurServiceID) >= 0) {
 					ServiceID = m_CurServiceID;
 				} else if (!m_ServiceSel.FollowViewableService
-						|| !pAnalyzer->IsServicePMTAcquired(ServiceIndex)) {
+						|| !pSource->IsServiceInfoAcquired(ServiceIndex)) {
 					SetService = false;
 				}
 			}
@@ -747,15 +1090,12 @@ void TSEngine::OnPATUpdated(AnalyzerFilter *pAnalyzer)
 }
 
 
-void TSEngine::OnPMTUpdated(AnalyzerFilter *pAnalyzer, uint16_t ServiceID)
+void TSEngine::UpdateEvent(const ServiceSource *pSource)
 {
-	OnPATUpdated(pAnalyzer);
-}
+	if (pSource == nullptr)
+		return;
 
-
-void TSEngine::OnEITUpdated(AnalyzerFilter *pAnalyzer)
-{
-	const uint16_t EventID = pAnalyzer->GetEventID(pAnalyzer->GetServiceIndexByID(m_CurServiceID));
+	const uint16_t EventID = pSource->GetEventID(pSource->GetServiceIndexByID(m_CurServiceID));
 
 	if (m_CurEventID != EventID) {
 		m_CurEventID = EventID;
@@ -764,10 +1104,85 @@ void TSEngine::OnEITUpdated(AnalyzerFilter *pAnalyzer)
 }
 
 
+bool TSEngine::IsAudioStreamPlayable(const ServiceSource *pSource, int ServiceIndex, int StreamIndex) const
+{
+	EventInfo::AudioInfo Info{};
+	const bool HasInfo = pSource->GetAudioComponentInfo(ServiceIndex, StreamIndex, &Info);
+	return IsAudioPlayable(pSource->GetAudioStreamType(ServiceIndex, StreamIndex), HasInfo ? &Info : nullptr);
+}
+
+
+int TSEngine::GetDefaultAudioStreamIndex(const ServiceSource *pSource, int ServiceIndex) const
+{
+	if (!pSource->IsMMT())
+		return 0;
+
+	const int StreamCount = pSource->GetAudioStreamCount(ServiceIndex);
+
+	// 再生できる音声のうち component_tag が最小のもの
+	int Default = -1;
+	uint8_t DefaultTag = COMPONENT_TAG_INVALID;
+	for (int i = 0; i < StreamCount; i++) {
+		const uint8_t Tag = pSource->GetAudioComponentTag(ServiceIndex, i);
+		if (((Default < 0) || (Tag < DefaultTag)) && IsAudioStreamPlayable(pSource, ServiceIndex, i)) {
+			Default = i;
+			DefaultTag = Tag;
+		}
+	}
+	if (Default < 0)
+		return 0;
+
+	// 2ch で再生する場合は、サイマル音声に AAC 2ch があればそれを優先する
+	EventInfo::AudioInfo DefaultInfo{};
+	if (IsStereoAudioPreferred()
+			&& pSource->GetAudioComponentInfo(ServiceIndex, Default, &DefaultInfo)
+			&& (DefaultInfo.SimulcastGroupTag != MMT_SIMULCAST_GROUP_TAG_NONE)
+			&& ((DefaultInfo.ComponentType & MMT_AUDIO_MODE_MASK) > MMT_AUDIO_MODE_2_0)) {
+		int Stereo = -1;
+		uint8_t StereoTag = COMPONENT_TAG_INVALID;
+		for (int i = 0; i < StreamCount; i++) {
+			EventInfo::AudioInfo Info{};
+			const uint8_t Tag = pSource->GetAudioComponentTag(ServiceIndex, i);
+			if ((i != Default)
+					&& ((Stereo < 0) || (Tag < StereoTag))
+					&& pSource->GetAudioComponentInfo(ServiceIndex, i, &Info)
+					&& (Info.SimulcastGroupTag == DefaultInfo.SimulcastGroupTag)
+					&& (Info.StreamContent == MMT_AUDIO_STREAM_CONTENT_AAC)
+					&& ((Info.ComponentType & MMT_AUDIO_MODE_MASK) == MMT_AUDIO_MODE_2_0)
+					&& IsAudioStreamPlayable(pSource, ServiceIndex, i)) {
+				Stereo = i;
+				StereoTag = Tag;
+			}
+		}
+		if (Stereo >= 0)
+			return Stereo;
+	}
+
+	return Default;
+}
+
+
+void TSEngine::GetAudioComponentList(const ServiceSource *pSource, int ServiceIndex, EventInfo::AudioInfoList *pList) const
+{
+	const int StreamCount = pSource->GetAudioStreamCount(ServiceIndex);
+
+	pList->clear();
+	pList->resize(std::max(StreamCount, 0));
+
+	for (int i = 0; i < StreamCount; i++) {
+		EventInfo::AudioInfo &Info = (*pList)[i];
+		if (!pSource->GetAudioComponentInfo(ServiceIndex, i, &Info))
+			Info = EventInfo::AudioInfo{};
+		Info.ComponentTag = pSource->GetAudioComponentTag(ServiceIndex, i);
+	}
+}
+
+
 void TSEngine::ResetStatus()
 {
 	m_CurTransportStreamID = TRANSPORT_STREAM_ID_INVALID;
 	m_CurServiceID = SERVICE_ID_INVALID;
+	m_IsMMTStreamStarted = false;
 }
 
 
@@ -783,51 +1198,94 @@ void TSEngine::SetAudioPID(uint16_t PID, bool ServiceChanged)
 }
 
 
+void TSEngine::SetVideoStreamID(uint16_t ID, bool ServiceChanged)
+{
+	if (IsMMTStream())
+		m_FilterGraph.WalkGraph([=](FilterBase *pFilter) { pFilter->SetActiveVideoPacketID(ID, ServiceChanged); });
+	else
+		SetVideoPID(ID, ServiceChanged);
+}
+
+
+void TSEngine::SetAudioStreamID(uint16_t ID, bool ServiceChanged)
+{
+	if (IsMMTStream())
+		m_FilterGraph.WalkGraph([=](FilterBase *pFilter) { pFilter->SetActiveAudioPacketID(ID, ServiceChanged); });
+	else
+		SetAudioPID(ID, ServiceChanged);
+}
+
+
+void TSEngine::ResetVideoAndAudioStreamID(bool ServiceChanged)
+{
+	const uint16_t InvalidID = IsMMTStream() ? MMT_PACKET_ID_INVALID : PID_INVALID;
+
+	SetVideoStreamID(InvalidID, ServiceChanged);
+	SetAudioStreamID(InvalidID, ServiceChanged);
+}
+
+
 bool TSEngine::IsSelectableService(int Index) const
 {
-	return (m_pAnalyzer != nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+
+	return (pSource != nullptr)
 		&& (Index >= 0)
-		&& (Index < m_pAnalyzer->GetServiceCount());
+		&& (Index < pSource->GetServiceCount());
 }
 
 
 int TSEngine::GetSelectableServiceCount() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return 0;
-	return m_pAnalyzer->GetServiceCount();
+	return pSource->GetServiceCount();
 }
 
 
 uint16_t TSEngine::GetSelectableServiceID(int Index) const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return SERVICE_ID_INVALID;
-	return m_pAnalyzer->GetServiceID(Index);
+	if (pSource->IsMMT() && (Index < 0))
+		return SERVICE_ID_INVALID;
+	return pSource->GetServiceID(Index);
 }
 
 
 uint16_t TSEngine::GetDefaultServiceID() const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return SERVICE_ID_INVALID;
-	return m_pAnalyzer->GetServiceID(-1);
+	return pSource->GetServiceID(-1);
 }
 
 
 int TSEngine::GetSelectableServiceIndexByID(uint16_t ServiceID) const
 {
-	if (m_pAnalyzer == nullptr)
+	const ServiceSource *pSource = GetServiceSource();
+	if (pSource == nullptr)
 		return -1;
-	return m_pAnalyzer->GetServiceIndexByID(ServiceID);
+	return pSource->GetServiceIndexByID(ServiceID);
 }
 
 
 bool TSEngine::GetSelectableServiceList(AnalyzerFilter::ServiceList *pList) const
 {
-	if (m_pAnalyzer == nullptr)
+	if ((m_pAnalyzer == nullptr) || IsMMTStream())
 		return false;
 	return m_pAnalyzer->GetServiceList(pList);
+}
+
+
+bool TSEngine::GetSelectableMMTServiceList(MMTAnalyzerFilter::ServiceList *pList) const
+{
+	if (!IsMMTStream())
+		return false;
+	return m_pMMTAnalyzer->GetServiceList(pList);
 }
 
 
@@ -837,6 +1295,7 @@ void TSEngine::OnFilterRegistered(FilterBase *pFilter, FilterGraph::IDType ID)
 	if (pAnalyzer != nullptr) {
 		pAnalyzer->AddEventListener(this);
 		m_pAnalyzer = pAnalyzer;
+		m_TSServiceSource = std::make_unique<TSServiceSource>(pAnalyzer);
 		return;
 	}
 
@@ -851,6 +1310,14 @@ void TSEngine::OnFilterRegistered(FilterBase *pFilter, FilterGraph::IDType ID)
 	if (pStreamParser != nullptr) {
 		pStreamParser->AddEventListener(this);
 		m_pStreamParser = pStreamParser;
+		return;
+	}
+
+	MMTAnalyzerFilter *pMMTAnalyzer = dynamic_cast<MMTAnalyzerFilter *>(pFilter);
+	if (pMMTAnalyzer != nullptr) {
+		pMMTAnalyzer->AddEventListener(this);
+		m_pMMTAnalyzer = pMMTAnalyzer;
+		m_MMTServiceSource = std::make_unique<MMTServiceSource>(pMMTAnalyzer);
 		return;
 	}
 }

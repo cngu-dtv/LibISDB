@@ -172,6 +172,29 @@ namespace LibISDB
 	constexpr uint16_t MMT_COMPONENT_TAG_SUPERIMPOSE_LAST  = 0x003F_u16;
 
 	/*
+		MH-音声コンポーネント記述子の stream_content (ARIB STD-B60 表 7-57)
+	*/
+	constexpr uint8_t MMT_AUDIO_STREAM_CONTENT_AAC = 0x3_u8; // MPEG-4 AAC
+	constexpr uint8_t MMT_AUDIO_STREAM_CONTENT_ALS = 0x4_u8; // MPEG-4 ALS
+
+	/*
+		MH-音声コンポーネント記述子の component_type の音声モード (b4-b0、ARIB STD-B60 表 7-60)
+		() 内は AAC の channelConfiguration
+	*/
+	constexpr uint8_t MMT_AUDIO_MODE_MASK            = 0x1F_u8;
+	constexpr uint8_t MMT_AUDIO_MODE_1_0             = 0x01_u8; // シングルモノ (1)
+	constexpr uint8_t MMT_AUDIO_MODE_1_0_1_0         = 0x02_u8; // デュアルモノ
+	constexpr uint8_t MMT_AUDIO_MODE_2_0             = 0x03_u8; // ステレオ (2)
+	constexpr uint8_t MMT_AUDIO_MODE_3_2_1           = 0x09_u8; // 5.1ch (6)
+	constexpr uint8_t MMT_AUDIO_MODE_3_3_1           = 0x0A_u8; // 6.1ch (11)
+	constexpr uint8_t MMT_AUDIO_MODE_5_2_1           = 0x0C_u8; // 7.1ch (7)
+	constexpr uint8_t MMT_AUDIO_MODE_3_2_2_1         = 0x0D_u8; // 7.1ch (12)
+	constexpr uint8_t MMT_AUDIO_MODE_2_0_0_3_0_2_0_1 = 0x0E_u8; // 7.1ch (14)
+	constexpr uint8_t MMT_AUDIO_MODE_22_2            = 0x11_u8; // 22.2ch (13)
+
+	constexpr uint8_t MMT_SIMULCAST_GROUP_TAG_NONE = 0xFF_u8; // サイマルキャストを行っていない
+
+	/*
 		HEVC の nal_unit_type (ITU-T H.265 表 7-1)
 	*/
 	constexpr uint8_t HEVC_NAL_UNIT_TYPE_IRAP_FIRST = 16_u8; // BLA_W_LP

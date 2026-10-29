@@ -28,6 +28,7 @@
 #include "../../LibISDBWindows.hpp"
 #include "ViewerFilter.hpp"
 #include "DirectShow/SourceFilter/TSSourceFilter.hpp"
+#include "DirectShow/SourceFilter/MMTSourceFilter.hpp"
 #include "DirectShow/VideoParsers/MPEG2ParserFilter.hpp"
 #include "DirectShow/VideoParsers/H264ParserFilter.hpp"
 #include "DirectShow/VideoParsers/H265ParserFilter.hpp"
@@ -54,6 +55,9 @@ namespace
 
 
 const std::chrono::milliseconds LOCK_TIMEOUT(2000);
+
+// WAVE_FORMAT_LATM_AAC (0x01FF) の GUID
+const GUID MEDIASUBTYPE_LATM_AAC = {0x000001FF, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 
 
 HRESULT SetVideoMediaType(CMediaType *pMediaType, BYTE VideoStreamType, int Width, int Height)
@@ -199,6 +203,7 @@ void LAVVideoDecoder_NotifyNewSegment(COMPointer<IBaseFilter> &Filter, const Str
 
 ViewerFilter::ViewerFilter() noexcept
 	: m_IsOpen(false)
+	, m_StreamFormat(StreamFormat::TS)
 
 	, m_pVideoParser(nullptr)
 
@@ -227,9 +232,12 @@ ViewerFilter::ViewerFilter() noexcept
 	, m_BufferSize(0)
 	, m_InitialPoolPercentage(0)
 	, m_PacketInputWait(0)
+	, m_MMTPresentationDelay(DirectShow::MMTSourceFilter::DEFAULT_PRESENTATION_DELAY)
+	, m_DownMixSurround(true)
 	, m_pVideoStreamCallback(nullptr)
 	, m_pAudioSampleCallback(nullptr)
 {
+	m_MMTReceiver.SetHandler(this);
 }
 
 
@@ -256,6 +264,7 @@ void ViewerFilter::Reset()
 
 	SetActiveVideoPID(PID_INVALID, false);
 	SetActiveAudioPID(PID_INVALID, false);
+	m_MMTReceiver.Reset();
 
 	//m_VideoInfo.Reset();
 }
@@ -332,6 +341,40 @@ void ViewerFilter::SetActiveAudioPID(uint16_t PID, bool ServiceChanged)
 }
 
 
+void ViewerFilter::SetActiveVideoPacketID(uint16_t PacketID, bool ServiceChanged)
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (PacketID == m_MMTReceiver.GetVideoPacketID())
+		return;
+
+	LIBISDB_TRACE(LIBISDB_STR("ViewerFilter::SetActiveVideoPacketID() : {:04X} <- {:04X}\n"), PacketID, m_MMTReceiver.GetVideoPacketID());
+
+	m_MMTReceiver.SetVideoPacketID(PacketID);
+
+	// 別のアセットになるので、ランダムアクセスポイントから出力し直す
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->Flush();
+}
+
+
+void ViewerFilter::SetActiveAudioPacketID(uint16_t PacketID, bool ServiceChanged)
+{
+	BlockLock Lock(m_FilterLock);
+
+	if (PacketID == m_MMTReceiver.GetAudioPacketID())
+		return;
+
+	LIBISDB_TRACE(LIBISDB_STR("ViewerFilter::SetActiveAudioPacketID() : {:04X} <- {:04X}\n"), PacketID, m_MMTReceiver.GetAudioPacketID());
+
+	// 同じサービス内の切り替えでは、キューにある音声を出力しきってから新しい音声に続ける
+	m_MMTReceiver.SetAudioPacketID(PacketID);
+
+	if (ServiceChanged && m_MMTSourceFilter)
+		m_MMTSourceFilter->Flush();
+}
+
+
 bool ViewerFilter::ProcessData(DataStream *pData)
 {
 	if (m_SourceFilter && pData->Is<TSPacket>()) {
@@ -344,6 +387,8 @@ bool ViewerFilter::ProcessData(DataStream *pData)
 				m_SourceFilter->InputMedia(pPacket);
 			}
 		} while (pData->Next());
+	} else if (m_MMTSourceFilter && pData->Is<TLVPacket>()) {
+		m_MMTReceiver.StorePacketStream(pData);
 	}
 
 	return true;
@@ -386,6 +431,8 @@ bool ViewerFilter::OpenViewer(const OpenSettings &Settings)
 	COMPointer<IPin> OutputVideoPin;
 	COMPointer<IPin> OutputAudioPin;
 
+	m_StreamFormat = Settings.Format;
+
 	try {
 		// フィルタグラフマネージャを作成する
 		hr = CreateGraphBuilder();
@@ -395,98 +442,104 @@ bool ViewerFilter::OpenViewer(const OpenSettings &Settings)
 
 		m_EventListenerList.CallEventListener(&ViewerFilter::EventListener::OnFilterGraphInitialize, this, m_GraphBuilder.Get());
 
-		Log(Logger::LogType::Information, LIBISDB_STR("ソースフィルタの接続中..."));
+		if (Settings.Format == StreamFormat::TLV) {
+			Log(Logger::LogType::Information, LIBISDB_STR("MMTソースフィルタの接続中..."));
 
-		// TSSourceFilter
-		{
-			// インスタンス作成
-			m_SourceFilter.Attach(static_cast<DirectShow::TSSourceFilter *>(DirectShow::TSSourceFilter::CreateInstance(nullptr, &hr)));
-			if (!m_SourceFilter || FAILED(hr))
-				throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("ソースフィルタを作成できません。"));
-			m_SourceFilter->SetOutputWhenPaused(Settings.VideoRenderer == DirectShow::VideoRenderer::RendererType::Default);
-			// フィルタグラフに追加
-			hr = m_GraphBuilder->AddFilter(m_SourceFilter.Get(), L"TSSourceFilter");
-			if (FAILED(hr))
-				throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("ソースフィルタをフィルタグラフに追加できません。"));
-			// 出力ピンを取得
-			OutputPin.Attach(DirectShow::GetFilterPin(m_SourceFilter.Get(), PINDIR_OUTPUT));
-			if (!OutputPin)
-				throw ErrorDescription(HRESULTErrorCode(E_UNEXPECTED), LIBISDB_STR("ソースフィルタの出力ピンを取得できません。"));
-			m_SourceFilter->EnableSync(m_EnablePTSSync, m_1SegMode);
-			if (m_BufferSize != 0)
-				m_SourceFilter->SetBufferSize(m_BufferSize);
-			m_SourceFilter->SetInitialPoolPercentage(m_InitialPoolPercentage);
-			m_SourceFilter->SetInputWait(m_PacketInputWait);
-		}
+			OpenMMTSourceFilter(Settings, NoVideo, &OutputVideoPin, &OutputAudioPin);
+		} else {
+			Log(Logger::LogType::Information, LIBISDB_STR("ソースフィルタの接続中..."));
 
-		Log(Logger::LogType::Information, LIBISDB_STR("MPEG-2 Demultiplexerフィルタの接続中..."));
-
-		// MPEG-2 Demultiplexer
-		{
-			hr = ::CoCreateInstance(
-				CLSID_MPEG2Demultiplexer, nullptr, CLSCTX_INPROC_SERVER,
-				IID_PPV_ARGS(m_MPEG2DemuxerFilter.GetPP()));
-			if (FAILED(hr)) {
-				throw ErrorDescription(
-					HRESULTErrorCode(hr),
-					LIBISDB_STR("MPEG-2 Demultiplexerフィルタを作成できません。"),
-					LIBISDB_STR("MPEG-2 Demultiplexerフィルタがインストールされているか確認してください。"));
-			}
-			hr = DirectShow::AppendFilterAndConnect(m_GraphBuilder.Get(), m_MPEG2DemuxerFilter.Get(), L"MPEG2Demultiplexer", &OutputPin);
-			if (FAILED(hr))
-				throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerをフィルタグラフに追加できません。"));
-
-			// IMpeg2Demultiplexerインタフェースのクエリー
-			IMpeg2Demultiplexer *pMpeg2Demuxer;
-			hr = m_MPEG2DemuxerFilter.QueryInterface(&pMpeg2Demuxer);
-			if (FAILED(hr)) {
-				throw ErrorDescription(
-					HRESULTErrorCode(hr),
-					LIBISDB_STR("MPEG-2 Demultiplexerインターフェースを取得できません。"),
-					LIBISDB_STR("互換性のないスプリッタの優先度がMPEG-2 Demultiplexerより高くなっている可能性があります。"));
-			}
-
-			if (!NoVideo) {
-				CMediaType MediaTypeVideo;
-
-				// 映像メディアフォーマット設定
-				hr = SetVideoMediaType(&MediaTypeVideo, Settings.VideoStreamType, 1920, 1080);
+			// TSSourceFilter
+			{
+				// インスタンス作成
+				m_SourceFilter.Attach(static_cast<DirectShow::TSSourceFilter *>(DirectShow::TSSourceFilter::CreateInstance(nullptr, &hr)));
+				if (!m_SourceFilter || FAILED(hr))
+					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("ソースフィルタを作成できません。"));
+				m_SourceFilter->SetOutputWhenPaused(Settings.VideoRenderer == DirectShow::VideoRenderer::RendererType::Default);
+				// フィルタグラフに追加
+				hr = m_GraphBuilder->AddFilter(m_SourceFilter.Get(), L"TSSourceFilter");
 				if (FAILED(hr))
-					throw ErrorDescription(HRESULTErrorCode(hr));
-				// 映像出力ピン作成
-				WCHAR szName[] = L"Video";
-				hr = pMpeg2Demuxer->CreateOutputPin(&MediaTypeVideo, szName, OutputVideoPin.GetPP());
+					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("ソースフィルタをフィルタグラフに追加できません。"));
+				// 出力ピンを取得
+				OutputPin.Attach(DirectShow::GetFilterPin(m_SourceFilter.Get(), PINDIR_OUTPUT));
+				if (!OutputPin)
+					throw ErrorDescription(HRESULTErrorCode(E_UNEXPECTED), LIBISDB_STR("ソースフィルタの出力ピンを取得できません。"));
+				m_SourceFilter->EnableSync(m_EnablePTSSync, m_1SegMode);
+				if (m_BufferSize != 0)
+					m_SourceFilter->SetBufferSize(m_BufferSize);
+				m_SourceFilter->SetInitialPoolPercentage(m_InitialPoolPercentage);
+				m_SourceFilter->SetInputWait(m_PacketInputWait);
+			}
+
+			Log(Logger::LogType::Information, LIBISDB_STR("MPEG-2 Demultiplexerフィルタの接続中..."));
+
+			// MPEG-2 Demultiplexer
+			{
+				hr = ::CoCreateInstance(
+					CLSID_MPEG2Demultiplexer, nullptr, CLSCTX_INPROC_SERVER,
+					IID_PPV_ARGS(m_MPEG2DemuxerFilter.GetPP()));
 				if (FAILED(hr)) {
-					pMpeg2Demuxer->Release();
-					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerの映像出力ピンを作成できません。"));
+					throw ErrorDescription(
+						HRESULTErrorCode(hr),
+						LIBISDB_STR("MPEG-2 Demultiplexerフィルタを作成できません。"),
+						LIBISDB_STR("MPEG-2 Demultiplexerフィルタがインストールされているか確認してください。"));
 				}
-			}
-
-			// 音声メディアフォーマット設定
-			CMediaType MediaTypeAudio;
-			MediaTypeAudio.InitMediaType();
-			MediaTypeAudio.SetType(&MEDIATYPE_Audio);
-			MediaTypeAudio.SetSubtype(&MEDIASUBTYPE_NULL);
-			MediaTypeAudio.SetVariableSize();
-			MediaTypeAudio.SetTemporalCompression(TRUE);
-			MediaTypeAudio.SetSampleSize(0);
-			MediaTypeAudio.SetFormatType(&FORMAT_None);
-			// 音声出力ピン作成
-			WCHAR szName[] = L"Audio";
-			hr = pMpeg2Demuxer->CreateOutputPin(&MediaTypeAudio, szName, OutputAudioPin.GetPP());
-			pMpeg2Demuxer->Release();
-			if (FAILED(hr))
-				throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerの音声出力ピンを作成できません。"));
-			if (OutputVideoPin) {
-				// 映像出力ピンのIMPEG2PIDMapインタフェースのクエリー
-				hr = OutputVideoPin.QueryInterface(&m_MPEG2DemuxerVideoMap);
+				hr = DirectShow::AppendFilterAndConnect(m_GraphBuilder.Get(), m_MPEG2DemuxerFilter.Get(), L"MPEG2Demultiplexer", &OutputPin);
 				if (FAILED(hr))
-					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("映像出力ピンのIMPEG2PIDMapを取得できません。"));
+					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerをフィルタグラフに追加できません。"));
+
+				// IMpeg2Demultiplexerインタフェースのクエリー
+				IMpeg2Demultiplexer *pMpeg2Demuxer;
+				hr = m_MPEG2DemuxerFilter.QueryInterface(&pMpeg2Demuxer);
+				if (FAILED(hr)) {
+					throw ErrorDescription(
+						HRESULTErrorCode(hr),
+						LIBISDB_STR("MPEG-2 Demultiplexerインターフェースを取得できません。"),
+						LIBISDB_STR("互換性のないスプリッタの優先度がMPEG-2 Demultiplexerより高くなっている可能性があります。"));
+				}
+
+				if (!NoVideo) {
+					CMediaType MediaTypeVideo;
+
+					// 映像メディアフォーマット設定
+					hr = SetVideoMediaType(&MediaTypeVideo, Settings.VideoStreamType, 1920, 1080);
+					if (FAILED(hr))
+						throw ErrorDescription(HRESULTErrorCode(hr));
+					// 映像出力ピン作成
+					WCHAR szName[] = L"Video";
+					hr = pMpeg2Demuxer->CreateOutputPin(&MediaTypeVideo, szName, OutputVideoPin.GetPP());
+					if (FAILED(hr)) {
+						pMpeg2Demuxer->Release();
+						throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerの映像出力ピンを作成できません。"));
+					}
+				}
+
+				// 音声メディアフォーマット設定
+				CMediaType MediaTypeAudio;
+				MediaTypeAudio.InitMediaType();
+				MediaTypeAudio.SetType(&MEDIATYPE_Audio);
+				MediaTypeAudio.SetSubtype(&MEDIASUBTYPE_NULL);
+				MediaTypeAudio.SetVariableSize();
+				MediaTypeAudio.SetTemporalCompression(TRUE);
+				MediaTypeAudio.SetSampleSize(0);
+				MediaTypeAudio.SetFormatType(&FORMAT_None);
+				// 音声出力ピン作成
+				WCHAR szName[] = L"Audio";
+				hr = pMpeg2Demuxer->CreateOutputPin(&MediaTypeAudio, szName, OutputAudioPin.GetPP());
+				pMpeg2Demuxer->Release();
+				if (FAILED(hr))
+					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MPEG-2 Demultiplexerの音声出力ピンを作成できません。"));
+				if (OutputVideoPin) {
+					// 映像出力ピンのIMPEG2PIDMapインタフェースのクエリー
+					hr = OutputVideoPin.QueryInterface(&m_MPEG2DemuxerVideoMap);
+					if (FAILED(hr))
+						throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("映像出力ピンのIMPEG2PIDMapを取得できません。"));
+				}
+				// 音声出力ピンのIMPEG2PIDMapインタフェースのクエリ
+				hr = OutputAudioPin.QueryInterface(&m_MPEG2DemuxerAudioMap);
+				if (FAILED(hr))
+					throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("音声出力ピンのIMPEG2PIDMapを取得できません。"));
 			}
-			// 音声出力ピンのIMPEG2PIDMapインタフェースのクエリ
-			hr = OutputAudioPin.QueryInterface(&m_MPEG2DemuxerAudioMap);
-			if (FAILED(hr))
-				throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("音声出力ピンのIMPEG2PIDMapを取得できません。"));
 		}
 
 		// 映像パーサフィルタの接続
@@ -566,6 +619,7 @@ bool ViewerFilter::OpenViewer(const OpenSettings &Settings)
 			SetAudioDecoderType(m_AudioStreamType);
 
 			m_AudioDecoder->AddEventListener(this);
+			m_AudioDecoder->SetDownMixSurround(m_DownMixSurround.load(std::memory_order_acquire));
 			m_AudioDecoder->SetJitterCorrection(m_AdjustAudioStreamTime);
 			if (m_pAudioSampleCallback)
 				m_AudioDecoder->SetSampleCallback(m_pAudioSampleCallback);
@@ -845,6 +899,7 @@ void ViewerFilter::CloseViewer()
 	m_ImageMixer.reset();
 
 	m_SourceFilter.Release();
+	m_MMTSourceFilter.Release();
 
 	m_VideoDecoderFilter.Release();
 	m_AudioDecoder.Release();
@@ -871,6 +926,7 @@ void ViewerFilter::CloseViewer()
 	m_AudioRendererName.clear();
 
 	m_VideoStreamType = STREAM_TYPE_UNINITIALIZED;
+	m_StreamFormat = StreamFormat::TS;
 
 	m_IsOpen = false;
 }
@@ -910,6 +966,8 @@ bool ViewerFilter::Stop()
 		//m_SourceFilter->Reset();
 		m_SourceFilter->Flush();
 	}
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->Flush();
 
 #ifdef LAV_VIDEO_DECODER_WORKAROUND
 	LAVVideoDecoder_NotifyEndOfSegment(m_VideoDecoderFilter, m_VideoDecoderName);
@@ -931,6 +989,8 @@ bool ViewerFilter::Pause()
 		//m_SourceFilter->Reset();
 		m_SourceFilter->Flush();
 	}
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->Flush();
 
 #ifdef LAV_VIDEO_DECODER_WORKAROUND
 	LAVVideoDecoder_NotifyEndOfSegment(m_VideoDecoderFilter, m_VideoDecoderName);
@@ -950,10 +1010,13 @@ bool ViewerFilter::Flush()
 		return false;
 	*/
 
-	if (!m_SourceFilter)
+	if (m_SourceFilter) {
+		m_SourceFilter->Flush();
+	} else if (m_MMTSourceFilter) {
+		m_MMTSourceFilter->Flush();
+	} else {
 		return false;
-
-	m_SourceFilter->Flush();
+	}
 
 	return true;
 }
@@ -1157,6 +1220,18 @@ bool ViewerFilter::AdjustVideoPosition()
 
 
 // 映像ウィンドウのサイズを設定する
+uint16_t ViewerFilter::GetVideoPacketID() const
+{
+	return m_MMTReceiver.GetVideoPacketID();
+}
+
+
+uint16_t ViewerFilter::GetAudioPacketID() const
+{
+	return m_MMTReceiver.GetAudioPacketID();
+}
+
+
 bool ViewerFilter::SetViewSize(int Width, int Height)
 {
 	BlockLock Lock(m_ResizeLock);
@@ -1572,6 +1647,8 @@ bool ViewerFilter::IsSPDIFPassthrough() const
 
 bool ViewerFilter::SetDownMixSurround(bool DownMix)
 {
+	m_DownMixSurround.store(DownMix, std::memory_order_release);
+
 	if (m_AudioDecoder)
 		return m_AudioDecoder->SetDownMixSurround(DownMix);
 	return false;
@@ -1580,9 +1657,7 @@ bool ViewerFilter::SetDownMixSurround(bool DownMix)
 
 bool ViewerFilter::GetDownMixSurround() const
 {
-	if (m_AudioDecoder)
-		return m_AudioDecoder->GetDownMixSurround();
-	return false;
+	return m_DownMixSurround.load(std::memory_order_acquire);
 }
 
 
@@ -1632,7 +1707,7 @@ bool ViewerFilter::SetAACDecoderType(AACDecoderType Type)
 {
 	if (m_AACDecoderType != Type) {
 		m_AACDecoderType = Type;
-		if (m_AudioStreamType == STREAM_TYPE_AAC)
+		if ((m_AudioStreamType == STREAM_TYPE_AAC) || (m_AudioStreamType == STREAM_TYPE_MPEG4_AUDIO))
 			SetAudioDecoderType(m_AudioStreamType);
 	}
 
@@ -1680,6 +1755,37 @@ bool ViewerFilter::GetAACDecoderVersion(AACDecoderType Type, std::string *pVersi
 	}
 
 	return DirectShow::AudioDecoderFilter::GetDecoderVersion(Decoder, pVersion);
+}
+
+
+bool ViewerFilter::IsMMTAudioPlayable(uint8_t StreamContent, uint8_t ComponentType) const noexcept
+{
+	// MPEG-4 ALS は非対応
+	if (StreamContent != MMT_AUDIO_STREAM_CONTENT_AAC)
+		return false;
+
+	switch (ComponentType & MMT_AUDIO_MODE_MASK) {
+	case MMT_AUDIO_MODE_1_0:
+	case MMT_AUDIO_MODE_1_0_1_0:
+	case MMT_AUDIO_MODE_2_0:
+	case MMT_AUDIO_MODE_3_2_1:
+		return true;
+
+	// FAAD2 の出力を 5.1ch にダウンミックスする
+	case MMT_AUDIO_MODE_22_2:
+		return m_AACDecoderType == AACDecoderType::FAAD2;
+
+#ifdef LIBISDB_HAS_FDK_AAC
+	// FDK が 5.1ch にダウンミックスする (22.2ch は FDK が非対応)
+	case MMT_AUDIO_MODE_3_3_1:
+	case MMT_AUDIO_MODE_5_2_1:
+	case MMT_AUDIO_MODE_3_2_2_1:
+	case MMT_AUDIO_MODE_2_0_0_3_0_2_0_1:
+		return m_AACDecoderType == AACDecoderType::FDK_AAC;
+#endif
+	}
+
+	return false;
 }
 
 
@@ -1927,6 +2033,8 @@ void ViewerFilter::ResetBuffer()
 {
 	if (m_SourceFilter)
 		m_SourceFilter->Reset();
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->Reset();
 }
 
 
@@ -1964,6 +2072,8 @@ int ViewerFilter::GetBufferFillPercentage() const
 {
 	if (m_SourceFilter)
 		return m_SourceFilter->GetBufferFillPercentage();
+	if (m_MMTSourceFilter)
+		return m_MMTSourceFilter->GetBufferFillPercentage();
 	return 0;
 }
 
@@ -1976,10 +2086,70 @@ bool ViewerFilter::SetPacketInputWait(DWORD Wait)
 		if (!m_SourceFilter->SetInputWait(Wait))
 			return false;
 	}
+	if (m_MMTSourceFilter)
+		m_MMTSourceFilter->SetInputWait(Wait);
 
 	m_PacketInputWait = Wait;
 
 	return true;
+}
+
+
+bool ViewerFilter::SetMMTPresentationDelay(LONGLONG Delay)
+{
+	LIBISDB_TRACE(LIBISDB_STR("ViewerFilter::SetMMTPresentationDelay({})\n"), Delay);
+
+	if (m_MMTSourceFilter) {
+		if (!m_MMTSourceFilter->SetPresentationDelay(Delay))
+			return false;
+	} else if ((Delay < 0) || (Delay > DirectShow::MMTSourceFilter::MAX_PRESENTATION_DELAY)) {
+		return false;
+	}
+
+	m_MMTPresentationDelay = Delay;
+
+	return true;
+}
+
+
+void ViewerFilter::OpenMMTSourceFilter(
+	const OpenSettings &Settings, bool NoVideo,
+	COMPointer<IPin> *pVideoPin, COMPointer<IPin> *pAudioPin)
+{
+	HRESULT hr = S_OK;
+
+	m_MMTSourceFilter.Attach(static_cast<DirectShow::MMTSourceFilter *>(DirectShow::MMTSourceFilter::CreateInstance(nullptr, &hr)));
+	if (!m_MMTSourceFilter || FAILED(hr))
+		throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MMTソースフィルタを作成できません。"));
+	m_MMTSourceFilter->SetOutputWhenPaused(Settings.VideoRenderer == DirectShow::VideoRenderer::RendererType::Default);
+	m_MMTSourceFilter->SetPresentationDelay(m_MMTPresentationDelay);
+	m_MMTSourceFilter->SetInputWait(m_PacketInputWait);
+
+	if (!NoVideo) {
+		CMediaType MediaTypeVideo;
+		hr = SetVideoMediaType(&MediaTypeVideo, Settings.VideoStreamType, 1920, 1080);
+		if (FAILED(hr))
+			throw ErrorDescription(HRESULTErrorCode(hr));
+		m_MMTSourceFilter->SetPinMediaType(DirectShow::MMTSourceFilter::PinType::Video, MediaTypeVideo);
+	}
+
+	CMediaType MediaTypeAudio;
+	MediaTypeAudio.InitMediaType();
+	MediaTypeAudio.SetType(&MEDIATYPE_Audio);
+	MediaTypeAudio.SetSubtype(&MEDIASUBTYPE_LATM_AAC);
+	MediaTypeAudio.SetVariableSize();
+	MediaTypeAudio.SetTemporalCompression(TRUE);
+	MediaTypeAudio.SetSampleSize(0);
+	MediaTypeAudio.SetFormatType(&FORMAT_None);
+	m_MMTSourceFilter->SetPinMediaType(DirectShow::MMTSourceFilter::PinType::Audio, MediaTypeAudio);
+
+	hr = m_GraphBuilder->AddFilter(m_MMTSourceFilter.Get(), L"MMTSourceFilter");
+	if (FAILED(hr))
+		throw ErrorDescription(HRESULTErrorCode(hr), LIBISDB_STR("MMTソースフィルタをフィルタグラフに追加できません。"));
+
+	if (!NoVideo)
+		*pVideoPin = m_MMTSourceFilter->GetPin(0);
+	*pAudioPin = m_MMTSourceFilter->GetPin(1);
 }
 
 
@@ -2131,6 +2301,20 @@ void ViewerFilter::ApplyAdjustVideoSampleOptions()
 void ViewerFilter::SetAudioDecoderType(BYTE StreamType)
 {
 	if (m_AudioDecoder) {
+		if (m_StreamFormat == StreamFormat::TLV) {
+			// MMT の音声は AudioMuxElement(1) が 1 つずつ入力される (ARIB STD-B60 8.2.1)
+			m_AudioDecoder->SetDecoderType(
+				StreamType == STREAM_TYPE_MPEG4_AUDIO ?
+					(
+#ifdef LIBISDB_HAS_FDK_AAC
+					m_AACDecoderType == AACDecoderType::FDK_AAC ?
+						DirectShow::AudioDecoderFilter::DecoderType::FDK_AAC_LATM :
+#endif
+						DirectShow::AudioDecoderFilter::DecoderType::AAC_LATM) :
+					DirectShow::AudioDecoderFilter::DecoderType::Invalid);
+			return;
+		}
+
 		m_AudioDecoder->SetDecoderType(
 			StreamType == STREAM_TYPE_AAC ?
 				(
@@ -2166,6 +2350,22 @@ void ViewerFilter::OnVideoInfoUpdated(const DirectShow::VideoParser::VideoInfo &
 	}
 
 	m_EventListenerList.CallEventListener(&ViewerFilter::EventListener::OnVideoSizeChanged, this, VideoInfo);
+}
+
+
+void ViewerFilter::OnAccessUnit(
+	const MMTMediaReceiver *pReceiver, MMTMediaReceiver::MediaType Type,
+	const MPUAssembler::AccessUnitInfo &Info)
+{
+	// 時刻の基準になる NTP の時刻が分かるまでは出力しない
+	if (!m_MMTSourceFilter || !pReceiver->HasNTPTime())
+		return;
+
+	m_MMTSourceFilter->InputAccessUnit(
+		(Type == MMTMediaReceiver::MediaType::Video) ?
+			DirectShow::MMTSourceFilter::PinType::Video :
+			DirectShow::MMTSourceFilter::PinType::Audio,
+		Info, pReceiver->GetNTPTime90kHz());
 }
 
 

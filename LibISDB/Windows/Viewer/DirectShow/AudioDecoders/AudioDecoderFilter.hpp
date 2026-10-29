@@ -71,6 +71,10 @@ namespace LibISDB::DirectShow
 #ifdef LIBISDB_HAS_FDK_AAC
 			FDK_AAC,
 #endif
+			AAC_LATM,     /**< AudioMuxElement(1) を 1 サンプルずつ入力する (MMT) */
+#ifdef LIBISDB_HAS_FDK_AAC
+			FDK_AAC_LATM, /**< AAC_LATM の FDK AAC 版 */
+#endif
 		};
 
 		enum class DualMonoMode {

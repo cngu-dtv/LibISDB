@@ -47,6 +47,7 @@ namespace LibISDB
 		const MMTDescriptorBlock *pDescBlock, ReturnArg<EventInfo::ExtendedTextInfoList> List);
 	bool GetMHEventVideoList(const MMTDescriptorBlock *pDescBlock, ReturnArg<EventInfo::VideoInfoList> List);
 	bool GetMHEventAudioList(const MMTDescriptorBlock *pDescBlock, ReturnArg<EventInfo::AudioInfoList> List);
+	bool GetMHAudioComponentInfo(const MHAudioComponentDescriptor *pDesc, ReturnArg<EventInfo::AudioInfo> Info);
 	bool GetMHEventSeriesInfo(const MMTDescriptorBlock *pDescBlock, ReturnArg<EventInfo::SeriesInfo> Info);
 
 	// 0xFF を超える component_tag は COMPONENT_TAG_INVALID になる

@@ -26,6 +26,7 @@
 
 #include "../../../../LibISDBPrivate.hpp"
 #include "AACDecoder_FAAD2.hpp"
+#include "../../../../MediaParsers/AACDownmix.hpp"
 
 #include "../../../../../Thirdparty/faad2/include/neaacdec.h"
 // ダウンミックス係数のパラメータ取得にFAAD2の内部情報が必要
@@ -52,8 +53,9 @@ void AACDecoder_FAAD2::GetVersion(std::string *pVersion)
 }
 
 
-AACDecoder_FAAD2::AACDecoder_FAAD2() noexcept
-	: m_hDecoder(nullptr)
+AACDecoder_FAAD2::AACDecoder_FAAD2(TransportType Transport) noexcept
+	: AACDecoder(Transport)
+	, m_hDecoder(nullptr)
 	, m_InitRequest(false)
 	, m_LastChannelConfig(0xFF)
 {
@@ -219,6 +221,50 @@ bool AACDecoder_FAAD2::DecodeFrame(const ADTSFrame *pFrame, ReturnArg<DecodeFram
 		m_LastChannelConfig = pFrame->GetChannelConfig();
 	}
 
+	return DecodeData(pFrame->GetData(), pFrame->GetSize(), Info);
+}
+
+
+bool AACDecoder_FAAD2::DecodeLATMFrame(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info)
+{
+	if (m_hDecoder == nullptr) {
+		return false;
+	}
+
+	const LATMParser::AudioConfig &Config = m_LATMParser.GetConfig();
+
+	if (m_InitRequest || m_LATMParser.IsConfigChanged()) {
+		if (!m_InitRequest) {
+			LIBISDB_TRACE(
+				LIBISDB_STR("AACDecoder_FAAD2::DecodeLATMFrame() Config changed (channel config {} -> {})\n"),
+				m_LastChannelConfig,
+				Config.ChannelConfiguration);
+			if (!ResetDecoder())
+				return false;
+		}
+
+		std::vector<uint8_t> SpecificConfig = Config.SpecificConfig;
+		unsigned long SampleRate;
+		unsigned char Channels;
+		if (SpecificConfig.empty()
+				|| (::NeAACDecInit2(
+					m_hDecoder,
+					SpecificConfig.data(), static_cast<unsigned long>(SpecificConfig.size()),
+					&SampleRate, &Channels) < 0)) {
+			return false;
+		}
+
+		m_InitRequest = false;
+		m_LastChannelConfig = Config.ChannelConfiguration;
+	}
+
+	// AudioMuxElement() から取り出した raw_data_block() を復号する
+	return DecodeData(m_LATMParser.GetPayloadData(), m_LATMParser.GetPayloadSize(), Info);
+}
+
+
+bool AACDecoder_FAAD2::DecodeData(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info)
+{
 	// デコード
 	NeAACDecFrameInfo FrameInfo;
 
@@ -226,14 +272,26 @@ bool AACDecoder_FAAD2::DecodeFrame(const ADTSFrame *pFrame, ReturnArg<DecodeFram
 		static_cast<uint8_t *>(
 			::NeAACDecDecode(
 				m_hDecoder, &FrameInfo,
-				const_cast<unsigned char *>(pFrame->GetData()),
-				static_cast<unsigned long>(pFrame->GetSize())));
+				const_cast<unsigned char *>(pData),
+				static_cast<unsigned long>(Size)));
 
 	bool OK = false;
 
 	if (FrameInfo.error == 0) {
+		int Channels = FrameInfo.channels;
+
+		// 22.2ch は 5.1ch にして出力する
+		if ((m_LastChannelConfig == 13) && (Channels == AAC_22_2CH_CHANNEL_COUNT) && (FrameInfo.samples > 0)) {
+			const size_t SampleCount = FrameInfo.samples / AAC_22_2CH_CHANNEL_COUNT;
+			m_DownmixBuffer.resize(SampleCount * 6);
+			DownmixAAC22_2chTo5_1ch(
+				reinterpret_cast<const int16_t *>(pPCMBuffer), m_DownmixBuffer.data(), SampleCount);
+			pPCMBuffer = reinterpret_cast<const uint8_t *>(m_DownmixBuffer.data());
+			Channels = 6;
+		}
+
 		m_AudioInfo.Frequency = FrameInfo.samplerate;
-		m_AudioInfo.ChannelCount = FrameInfo.channels;
+		m_AudioInfo.ChannelCount = Channels;
 		// FAADではモノラルが2chにデコードされる
 		if ((FrameInfo.channels == 2) && (m_LastChannelConfig == 1))
 			m_AudioInfo.OriginalChannelCount = 1;

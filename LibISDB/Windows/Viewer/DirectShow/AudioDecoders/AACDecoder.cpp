@@ -33,8 +33,9 @@ namespace LibISDB::DirectShow
 {
 
 
-AACDecoder::AACDecoder() noexcept
-	: m_ADTSParser(nullptr)
+AACDecoder::AACDecoder(TransportType Transport) noexcept
+	: m_Transport(Transport)
+	, m_ADTSParser(nullptr)
 	, m_pADTSFrame(nullptr)
 	, m_DecodeError(false)
 {
@@ -52,6 +53,7 @@ bool AACDecoder::Open()
 		return false;
 
 	m_ADTSParser.Reset();
+	m_LATMParser.Reset();
 	ClearAudioInfo();
 
 	return true;
@@ -63,6 +65,7 @@ void AACDecoder::Close()
 	CloseDecoder();
 	m_ADTSParser.Reset();
 	m_pADTSFrame = nullptr;
+	m_LATMParser.Reset();
 }
 
 
@@ -72,6 +75,7 @@ bool AACDecoder::Reset()
 		return false;
 
 	m_ADTSParser.Reset();
+	m_LATMParser.Reset();
 	ClearAudioInfo();
 	m_DecodeError = false;
 
@@ -85,6 +89,21 @@ bool AACDecoder::Decode(const uint8_t *pData, size_t *pDataSize, ReturnArg<Decod
 		return false;
 
 	m_pADTSFrame = nullptr;
+
+	if (m_Transport == TransportType::LATM) {
+		// 入力全体を AudioMuxElement(1) 1 つとして扱う
+		if (!m_LATMParser.ParseAudioMuxElement(pData, *pDataSize))
+			return false;
+
+		if (!DecodeLATMFrame(pData, *pDataSize, Info)) {
+			m_DecodeError = true;
+			return false;
+		}
+
+		m_DecodeError = false;
+
+		return true;
+	}
 
 	ADTSFrame *pFrame;
 	if (!m_ADTSParser.StoreES(pData, pDataSize, &pFrame))

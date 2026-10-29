@@ -85,6 +85,7 @@
     <ClInclude Include="..\LibISDB\MMT\MMTDescriptorBlock.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTDescriptors.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTGeneralLocationInfo.hpp" />
+    <ClInclude Include="..\LibISDB\MMT\MMTMediaReceiver.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTPacketIDMap.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTPPacket.hpp" />
     <ClInclude Include="..\LibISDB\MMT\MMTPPayload.hpp" />
@@ -106,9 +107,11 @@
     <ClInclude Include="..\LibISDB\LibISDBPrivate.hpp" />
     <ClInclude Include="..\LibISDB\LibISDBVersion.hpp" />
     <ClInclude Include="..\LibISDB\LibISDBWindows.hpp" />
+    <ClInclude Include="..\LibISDB\MediaParsers\AACDownmix.hpp" />
     <ClInclude Include="..\LibISDB\MediaParsers\ADTSParser.hpp" />
     <ClInclude Include="..\LibISDB\MediaParsers\H264Parser.hpp" />
     <ClInclude Include="..\LibISDB\MediaParsers\H265Parser.hpp" />
+    <ClInclude Include="..\LibISDB\MediaParsers\LATMParser.hpp" />
     <ClInclude Include="..\LibISDB\MediaParsers\MPEG2VideoParser.hpp" />
     <ClInclude Include="..\LibISDB\MediaParsers\MPEGVideoParser.hpp" />
     <ClInclude Include="..\LibISDB\Templates\EnumFlags.hpp" />
@@ -188,9 +191,11 @@
     <ClCompile Include="..\LibISDB\Filters\TeeFilter.cpp" />
     <ClCompile Include="..\LibISDB\Filters\TSPacketCounterFilter.cpp" />
     <ClCompile Include="..\LibISDB\Filters\TSPacketParserFilter.cpp" />
+    <ClCompile Include="..\LibISDB\MediaParsers\AACDownmix.cpp" />
     <ClCompile Include="..\LibISDB\MediaParsers\ADTSParser.cpp" />
     <ClCompile Include="..\LibISDB\MediaParsers\H264Parser.cpp" />
     <ClCompile Include="..\LibISDB\MediaParsers\H265Parser.cpp" />
+    <ClCompile Include="..\LibISDB\MediaParsers\LATMParser.cpp" />
     <ClCompile Include="..\LibISDB\MediaParsers\MPEG2VideoParser.cpp" />
     <ClCompile Include="..\LibISDB\MediaParsers\MPEGVideoParser.cpp" />
     <ClCompile Include="..\LibISDB\TS\CaptionParser.cpp" />
@@ -222,6 +227,7 @@
     <ClCompile Include="..\LibISDB\MMT\MMTDescriptorBlock.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTDescriptors.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTGeneralLocationInfo.cpp" />
+    <ClCompile Include="..\LibISDB\MMT\MMTMediaReceiver.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTPacketIDMap.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTPPacket.cpp" />
     <ClCompile Include="..\LibISDB\MMT\MMTPPayload.cpp" />

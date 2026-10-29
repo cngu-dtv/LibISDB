@@ -60,8 +60,9 @@ void AACDecoder_FDK::GetVersion(std::string *pVersion)
 }
 
 
-AACDecoder_FDK::AACDecoder_FDK() noexcept
-	: m_hDecoder(nullptr)
+AACDecoder_FDK::AACDecoder_FDK(TransportType Transport) noexcept
+	: AACDecoder(Transport)
+	, m_hDecoder(nullptr)
 	, m_LastChannelConfig(0xFF)
 {
 }
@@ -148,7 +149,8 @@ bool AACDecoder_FDK::OpenDecoder()
 	CloseDecoder();
 
 	// FDK AAC オープン
-	m_hDecoder = ::aacDecoder_Open(TT_MP4_ADTS, 1);
+	m_hDecoder = ::aacDecoder_Open(
+		(m_Transport == TransportType::LATM) ? TT_MP4_LATM_MCP1 : TT_MP4_ADTS, 1);
 	if (m_hDecoder == nullptr)
 		return false;
 
@@ -193,21 +195,51 @@ bool AACDecoder_FDK::DecodeFrame(const ADTSFrame *pFrame, ReturnArg<DecodeFrameI
 		m_LastChannelConfig = pFrame->GetChannelConfig();
 	}
 
+	return DecodeData(pFrame->GetData(), pFrame->GetSize(), Info);
+}
+
+
+bool AACDecoder_FDK::DecodeLATMFrame(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info)
+{
+	if (m_hDecoder == nullptr) {
+		return false;
+	}
+
+	const uint8_t ChannelConfig = m_LATMParser.GetConfig().ChannelConfiguration;
+
+	if (ChannelConfig != m_LastChannelConfig) {
+		LIBISDB_TRACE(
+			LIBISDB_STR("AACDecoder_FDK::DecodeLATMFrame() Channel config changed {} -> {}\n"),
+			m_LastChannelConfig,
+			ChannelConfig);
+		if (!ResetDecoder())
+			return false;
+
+		m_LastChannelConfig = ChannelConfig;
+	}
+
+	// TT_MP4_LATM_MCP1 で AudioMuxElement(1) をそのまま渡す
+	return DecodeData(pData, Size, Info);
+}
+
+
+bool AACDecoder_FDK::DecodeData(const uint8_t *pData, size_t Size, ReturnArg<DecodeFrameInfo> Info)
+{
 	// デコード
 	bool OK = false;
-	UCHAR *p = const_cast<UCHAR *>(pFrame->GetData());
-	UINT Avail = static_cast<UINT>(pFrame->GetSize());
+	UCHAR *p = const_cast<UCHAR *>(pData);
+	UINT Avail = static_cast<UINT>(Size);
 
 	while (Avail > 0) {
-		const UINT Size = Avail;
-		AAC_DECODER_ERROR Err = ::aacDecoder_Fill(m_hDecoder, &p, &Size, &Avail);
+		const UINT FillSize = Avail;
+		AAC_DECODER_ERROR Err = ::aacDecoder_Fill(m_hDecoder, &p, &FillSize, &Avail);
 		if (Err != AAC_DEC_OK) {
 			LIBISDB_TRACE(
 				LIBISDB_STR("aacDecoder_Fill() error {:#X}\n"),
 				static_cast<std::underlying_type_t<AAC_DECODER_ERROR>>(Err));
 			break;
 		}
-		p += Size - Avail;
+		p += FillSize - Avail;
 
 		Err = ::aacDecoder_DecodeFrame(
 			m_hDecoder,

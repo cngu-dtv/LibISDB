@@ -2888,6 +2888,774 @@ TEST_CASE("EPGDatabaseMMT", "[mmt][epg]")
 }
 
 
+#include "../LibISDB/MediaParsers/LATMParser.hpp"
+#include "../LibISDB/MMT/MMTMediaReceiver.hpp"
+#include "../LibISDB/Engine/TSEngine.hpp"
+
+namespace
+{
+	class BitWriter
+	{
+	public:
+		void Put(std::uint32_t Value, int Bits)
+		{
+			while (Bits-- > 0) {
+				if ((m_BitCount & 7) == 0)
+					m_Data.push_back(0);
+				if ((Value >> Bits) & 1)
+					m_Data.back() |= static_cast<std::uint8_t>(0x80 >> (m_BitCount & 7));
+				m_BitCount++;
+			}
+		}
+
+		void PutBytes(const ByteArray &Data)
+		{
+			for (std::uint8_t Byte : Data)
+				Put(Byte, 8);
+		}
+
+		size_t GetBitCount() const noexcept { return m_BitCount; }
+		const ByteArray & GetData() const noexcept { return m_Data; }
+
+	private:
+		ByteArray m_Data;
+		size_t m_BitCount = 0;
+	};
+
+	// AudioSpecificConfig() (AAC LC、GASpecificConfig() の拡張無し)
+	void PutAudioSpecificConfig(BitWriter &Writer, std::uint8_t SamplingFrequencyIndex, std::uint8_t ChannelConfiguration)
+	{
+		Writer.Put(2, 5);
+		Writer.Put(SamplingFrequencyIndex, 4);
+		Writer.Put(ChannelConfiguration, 4);
+		Writer.Put(0, 3); // frameLengthFlag, dependsOnCoreCoder, extensionFlag
+	}
+
+	// StreamMuxConfig() (audioMuxVersion = 0) の後の部分
+	void PutStreamMuxConfigTail(BitWriter &Writer)
+	{
+		Writer.Put(0, 3);    // frameLengthType
+		Writer.Put(0xFF, 8); // latmBufferFullness
+		Writer.Put(0, 1);    // otherDataPresent
+		Writer.Put(0, 1);    // crcCheckPresent
+	}
+
+	void PutPayload(BitWriter &Writer, const ByteArray &Payload)
+	{
+		size_t Length = Payload.size();
+		while (Length >= 255) {
+			Writer.Put(255, 8);
+			Length -= 255;
+		}
+		Writer.Put(static_cast<std::uint32_t>(Length), 8);
+		Writer.PutBytes(Payload);
+	}
+
+	ByteArray MakeAudioMuxElement(std::uint8_t ChannelConfiguration, const ByteArray &Payload, bool UseSameStreamMux = false)
+	{
+		BitWriter Writer;
+		Writer.Put(UseSameStreamMux ? 1 : 0, 1);
+		if (!UseSameStreamMux) {
+			Writer.Put(0, 1);  // audioMuxVersion
+			Writer.Put(1, 1);  // allStreamsSameTimeFraming
+			Writer.Put(0, 6);  // numSubFrames
+			Writer.Put(0, 4);  // numProgram
+			Writer.Put(0, 3);  // numLayer
+			PutAudioSpecificConfig(Writer, 3, ChannelConfiguration);
+			PutStreamMuxConfigTail(Writer);
+		}
+		PutPayload(Writer, Payload);
+		return Writer.GetData();
+	}
+}
+
+TEST_CASE("LATMParser", "[mediaparser][latm]")
+{
+	using namespace LibISDB;
+
+	LATMParser Parser;
+	const ByteArray Payload = HexBytes("ABCDEF");
+
+	// 48kHz / 2ch の AudioSpecificConfig() は 0x1190
+	const ByteArray Element = MakeAudioMuxElement(2, Payload);
+	REQUIRE(Parser.ParseAudioMuxElement(Element.data(), Element.size()));
+	CHECK(Parser.HasConfig());
+	CHECK(Parser.IsConfigChanged());
+	CHECK(Parser.GetConfig().AudioObjectType == 2);
+	CHECK(Parser.GetConfig().SamplingFrequencyIndex == 3);
+	CHECK(Parser.GetConfig().SamplingFrequency == 48000);
+	CHECK(Parser.GetConfig().ChannelConfiguration == 2);
+	CHECK(Parser.GetConfig().SpecificConfig == HexBytes("1190"));
+	// ペイロードはバイト境界から始まらない (53 ビット目から)
+	CHECK(ByteArray(Parser.GetPayloadData(), Parser.GetPayloadData() + Parser.GetPayloadSize()) == Payload);
+
+	SECTION("SameStreamMux") {
+		const ByteArray Same = MakeAudioMuxElement(2, HexBytes("0102"), true);
+		REQUIRE(Parser.ParseAudioMuxElement(Same.data(), Same.size()));
+		CHECK_FALSE(Parser.IsConfigChanged());
+		CHECK(ByteArray(Parser.GetPayloadData(), Parser.GetPayloadData() + Parser.GetPayloadSize()) == HexBytes("0102"));
+
+		// 同じ設定を再び送っても変化ではない
+		REQUIRE(Parser.ParseAudioMuxElement(Element.data(), Element.size()));
+		CHECK_FALSE(Parser.IsConfigChanged());
+
+		const ByteArray Surround = MakeAudioMuxElement(6, Payload);
+		REQUIRE(Parser.ParseAudioMuxElement(Surround.data(), Surround.size()));
+		CHECK(Parser.IsConfigChanged());
+		CHECK(Parser.GetConfig().ChannelConfiguration == 6);
+	}
+
+	SECTION("LongPayload") {
+		ByteArray Long(300);
+		for (size_t i = 0; i < Long.size(); i++)
+			Long[i] = static_cast<std::uint8_t>(i * 7);
+		const ByteArray LongElement = MakeAudioMuxElement(2, Long);
+		REQUIRE(Parser.ParseAudioMuxElement(LongElement.data(), LongElement.size()));
+		CHECK(ByteArray(Parser.GetPayloadData(), Parser.GetPayloadData() + Parser.GetPayloadSize()) == Long);
+	}
+
+	SECTION("ProgramConfigElement") {
+		// channelConfiguration = 0 + 2 つの SCE の program_config_element() (二重音声)
+		BitWriter Writer;
+		Writer.Put(0, 1);
+		Writer.Put(0, 1);
+		Writer.Put(1, 1);
+		Writer.Put(0, 6 + 4 + 3);
+		const size_t ConfigPos = Writer.GetBitCount();
+		Writer.Put(2, 5);
+		Writer.Put(3, 4);
+		Writer.Put(0, 4);
+		Writer.Put(0, 3);
+		Writer.Put(0, 4);   // element_instance_tag
+		Writer.Put(1, 2);   // object_type
+		Writer.Put(3, 4);   // sampling_frequency_index
+		Writer.Put(2, 4);   // num_front_channel_elements
+		Writer.Put(0, 4 + 4 + 2 + 3 + 4);
+		Writer.Put(0, 3);   // mono / stereo / matrix mixdown
+		Writer.Put(0x00, 5);
+		Writer.Put(0x01, 5);
+		// byte_alignment() は AudioSpecificConfig() の先頭から
+		while ((Writer.GetBitCount() - ConfigPos) % 8 != 0)
+			Writer.Put(0, 1);
+		Writer.Put(1, 8);   // comment_field_bytes
+		Writer.Put(0x41, 8);
+		const size_t ConfigBits = Writer.GetBitCount() - ConfigPos;
+		PutStreamMuxConfigTail(Writer);
+		PutPayload(Writer, Payload);
+
+		REQUIRE(Parser.ParseAudioMuxElement(Writer.GetData().data(), Writer.GetData().size()));
+		CHECK(Parser.IsConfigChanged());
+		CHECK(Parser.GetConfig().ChannelConfiguration == 0);
+		CHECK(Parser.GetConfig().SpecificConfig.size() == (ConfigBits + 7) / 8);
+		CHECK(ByteArray(Parser.GetPayloadData(), Parser.GetPayloadData() + Parser.GetPayloadSize()) == Payload);
+	}
+
+	SECTION("AudioMuxVersion1") {
+		BitWriter Writer;
+		Writer.Put(0, 1);
+		Writer.Put(1, 1);   // audioMuxVersion
+		Writer.Put(0, 1);   // audioMuxVersionA
+		Writer.Put(0, 2);   // taraBufferFullness (bytesForValue)
+		Writer.Put(0xFF, 8);
+		Writer.Put(1, 1);
+		Writer.Put(0, 6 + 4 + 3);
+		Writer.Put(0, 2);   // ascLen (bytesForValue)
+		Writer.Put(20, 8);  // 16 ビット + fillBits 4 ビット
+		PutAudioSpecificConfig(Writer, 3, 1);
+		Writer.Put(0, 4);
+		PutStreamMuxConfigTail(Writer);
+		PutPayload(Writer, Payload);
+
+		REQUIRE(Parser.ParseAudioMuxElement(Writer.GetData().data(), Writer.GetData().size()));
+		CHECK(Parser.GetConfig().ChannelConfiguration == 1);
+		CHECK(Parser.GetConfig().SpecificConfig == HexBytes("1188"));
+		CHECK(ByteArray(Parser.GetPayloadData(), Parser.GetPayloadData() + Parser.GetPayloadSize()) == Payload);
+	}
+
+	SECTION("Error") {
+		LATMParser NewParser;
+		const ByteArray Same = MakeAudioMuxElement(2, Payload, true);
+		// 設定がまだ無い
+		CHECK_FALSE(NewParser.ParseAudioMuxElement(Same.data(), Same.size()));
+		// ペイロードが足りない
+		CHECK_FALSE(NewParser.ParseAudioMuxElement(Element.data(), Element.size() - 1));
+		CHECK_FALSE(NewParser.ParseAudioMuxElement(Element.data(), 2));
+		// numSubFrames が 0 でない
+		BitWriter Writer;
+		Writer.Put(0, 2);
+		Writer.Put(1, 1);
+		Writer.Put(1, 6);
+		Writer.Put(0, 7);
+		PutAudioSpecificConfig(Writer, 3, 2);
+		PutStreamMuxConfigTail(Writer);
+		PutPayload(Writer, Payload);
+		CHECK_FALSE(NewParser.ParseAudioMuxElement(Writer.GetData().data(), Writer.GetData().size()));
+		CHECK_FALSE(NewParser.HasConfig());
+		CHECK_FALSE(NewParser.ParseAudioMuxElement(nullptr, 0));
+	}
+}
+
+namespace
+{
+	ByteArray MakeAudioComponentDescriptor(std::uint16_t ComponentTag, std::uint8_t ComponentType)
+	{
+		ByteArray Body {0xF3, ComponentType};
+		Append16(Body, ComponentTag);
+		Append(Body, HexBytes("11FF5F6A706E"));
+		return MakeMMTDescriptor(0x8014, Body);
+	}
+
+	// 映像 0x0100 / 音声 0x0110, 0x0111 の MPT (MPU 10 / 3 の時刻を持つ)
+	ByteArray MakeMediaMPTPayload(std::uint64_t Time)
+	{
+		ByteArray Payload {0xFC, 0x02};
+		Append16(Payload, 0x0400);
+		Append16(Payload, 0x0000);
+		ByteArray Video = MakeMPUTimestampDescriptor(10, Time);
+		Append(Video, MakeMPUExtendedTimestampDescriptor(10, {4500, 1500}));
+		ByteArray Audio = MakeMPUTimestampDescriptor(3, Time);
+		ByteArray AudioExtended {0xFB};
+		Append32(AudioExtended, 48000);
+		Append16(AudioExtended, 1024);
+		Append32(AudioExtended, 3);
+		AudioExtended.insert(AudioExtended.end(), {0x3F, 0x00, 0x00, 0x01, 0x00, 0x00});
+		Append(Audio, MakeMMTDescriptor(0x8026, AudioExtended));
+		Append(Audio, MakeAudioComponentDescriptor(0x0010, 0x03));
+		ByteArray Audio2 = MakeAudioComponentDescriptor(0x0011, 0x09);
+		const ByteArray Assets[] = {
+			MakeAsset(0x0100, LibISDB::MMT_ASSET_TYPE_HEV1, 0x0000, Video),
+			MakeAsset(0x0111, LibISDB::MMT_ASSET_TYPE_MP4A, 0x0011, Audio2),
+			MakeAsset(0x0110, LibISDB::MMT_ASSET_TYPE_MP4A, 0x0010, Audio),
+		};
+		Payload.push_back(static_cast<std::uint8_t>(std::size(Assets)));
+		for (const ByteArray &e : Assets)
+			Append(Payload, e);
+		return Payload;
+	}
+
+	class MediaReceiverRecorder
+		: public LibISDB::MMTMediaReceiver::Handler
+	{
+	public:
+		struct AccessUnit {
+			LibISDB::MMTMediaReceiver::MediaType Type;
+			std::uint16_t PacketID;
+			bool HasTimestamp;
+			std::int64_t PTS;
+			bool RandomAccess;
+			std::int64_t NTPTime;
+			ByteArray Data;
+		};
+
+		std::vector<AccessUnit> AccessUnits;
+
+		void OnAccessUnit(
+			const LibISDB::MMTMediaReceiver *pReceiver, LibISDB::MMTMediaReceiver::MediaType Type,
+			const LibISDB::MPUAssembler::AccessUnitInfo &Info) override
+		{
+			AccessUnits.push_back({
+				Type, Info.PacketID, Info.HasTimestamp, Info.PTS, Info.RandomAccess,
+				pReceiver->GetNTPTime90kHz(), ByteArray(Info.pData, Info.pData + Info.DataSize)});
+		}
+	};
+
+	class MediaReceiverSink
+		: public LibISDB::SingleInputFilter
+	{
+	public:
+		MediaReceiverSink(LibISDB::MMTMediaReceiver &Receiver) : m_Receiver(Receiver) {}
+
+		const LibISDB::CharType * GetObjectName() const noexcept override { return LIBISDB_STR("MediaReceiverSink"); }
+
+		bool ReceiveData(LibISDB::DataStream *pData) override
+		{
+			m_Receiver.StorePacketStream(pData);
+			return true;
+		}
+
+	private:
+		LibISDB::MMTMediaReceiver &m_Receiver;
+	};
+
+	// MPT / NTP と、映像・音声の MPU の TLV パケット列
+	struct MediaStreamPackets {
+		ByteArray Signaling;
+		ByteArray Media;
+	};
+
+	MediaStreamPackets MakeMediaStreamPackets(std::uint64_t MPTTime, std::uint64_t NTPTime)
+	{
+		MediaStreamPackets Packets;
+		std::vector<ByteArray> Signaling;
+		Signaling.push_back(MakeMMTPTLV(0x0000, 0, 0x02,
+			MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x80, 1, MakePLTPayload(0x0400, 0x0F00))))));
+		Signaling.push_back(MakeMMTPTLV(0x0F00, 0, 0x02,
+			MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x20, 1, MakeMediaMPTPayload(MPTTime))))));
+		Signaling.push_back(MakeTLV(0x02, MakeIPv6UDP(456, 123, MakeNTP(NTPTime))));
+		// 最後のパケットは次の TLV パケットの同期バイトを見るまで出力されない
+		for (int i = 0; i < 4; i++)
+			Signaling.push_back(MakeTLV(0xFF, ByteArray(16, 0xFF)));
+		Packets.Signaling = Concat(Signaling);
+
+		const ByteArray AUD = MakeNALUnit(35, 0x50, 3);
+		std::vector<ByteArray> Media;
+		Media.push_back(MakeMPUTLV(0x0100, 1000, true,
+			MakeMPUPayload(0, 10, {MakeNALUnitMFU(AUD), MakeNALUnitMFU(MakeNALUnit(19, 0x13, 300))})));
+		Media.push_back(MakeMPUTLV(0x0100, 1001, false,
+			MakeMPUPayload(0, 10, {MakeNALUnitMFU(AUD), MakeNALUnitMFU(MakeNALUnit(1, 0x14, 100))})));
+		Media.push_back(MakeMPUTLV(0x0110, 50, true, MakeMPUPayload(0, 3, {HexBytes("20000A0B")})));
+		Media.push_back(MakeMPUTLV(0x0111, 70, true, MakeMPUPayload(0, 3, {HexBytes("20000C0D")})));
+		Media.push_back(MakeMPUTLV(0x0100, 1002, true,
+			MakeMPUPayload(0, 11, {MakeNALUnitMFU(AUD)})));
+		for (int i = 0; i < 4; i++)
+			Media.push_back(MakeTLV(0xFF, ByteArray(16, 0xFF)));
+		Packets.Media = Concat(Media);
+
+		return Packets;
+	}
+}
+
+TEST_CASE("MMTMediaReceiver", "[mmt][viewer]")
+{
+	using namespace LibISDB;
+
+	auto pParser = std::make_unique<StreamPacketParserFilter>();
+	MMTMediaReceiver Receiver;
+	MediaReceiverRecorder Recorder;
+	MediaReceiverSink Sink(Receiver);
+	Receiver.SetHandler(&Recorder);
+	pParser->SetOutputFilter(&Sink, Sink.GetInputSink());
+	REQUIRE(pParser->StartStreaming());
+
+	const std::uint64_t Time = static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32;
+	const std::int64_t Base = static_cast<std::int64_t>(TEST_NTP_SECONDS) * 90000;
+	// NTP の時刻は提示時刻の 0.5 秒前
+	const MediaStreamPackets Packets = MakeMediaStreamPackets(Time, Time - 0x80000000ULL);
+
+	SECTION("NoTarget") {
+		InputFilter(*pParser, Packets.Signaling, 4096);
+		InputFilter(*pParser, Packets.Media, 4096);
+		CHECK(Recorder.AccessUnits.empty());
+		CHECK(Receiver.HasNTPTime());
+		CHECK(Receiver.GetNTPTime90kHz() == Base - 45000);
+	}
+
+	SECTION("Selected") {
+		Receiver.SetVideoPacketID(0x0100);
+		Receiver.SetAudioPacketID(0x0110);
+		CHECK(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Video) == nullptr);
+		InputFilter(*pParser, Packets.Signaling, 4096);
+		REQUIRE(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Video) != nullptr);
+		CHECK(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Video)->GetMediaType() == MPUAssembler::MediaType::Video);
+		REQUIRE(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Audio) != nullptr);
+		CHECK(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Audio)->GetMediaType() == MPUAssembler::MediaType::Audio);
+		InputFilter(*pParser, Packets.Media, 4096);
+
+		// 映像のアクセスユニットは次の AUD で確定する
+		REQUIRE(Recorder.AccessUnits.size() == 3);
+		CHECK(Recorder.AccessUnits[0].Type == MMTMediaReceiver::MediaType::Video);
+		CHECK(Recorder.AccessUnits[0].PacketID == 0x0100);
+		CHECK(Recorder.AccessUnits[0].RandomAccess);
+		CHECK(Recorder.AccessUnits[0].HasTimestamp);
+		CHECK(Recorder.AccessUnits[0].PTS == Base + 1500);
+		CHECK(Recorder.AccessUnits[0].NTPTime == Base - 45000);
+		CHECK(Recorder.AccessUnits[1].Type == MMTMediaReceiver::MediaType::Audio);
+		CHECK(Recorder.AccessUnits[1].PacketID == 0x0110);
+		CHECK(Recorder.AccessUnits[1].Data == HexBytes("20000A0B"));
+		CHECK(Recorder.AccessUnits[1].HasTimestamp);
+		CHECK(Recorder.AccessUnits[1].PTS == Base);
+		CHECK(Recorder.AccessUnits[2].Type == MMTMediaReceiver::MediaType::Video);
+		CHECK_FALSE(Recorder.AccessUnits[2].RandomAccess);
+
+		// 音声を切り替えると、前のアセットの組み立ては止め、最後の MPT で新しいアセットの組み立てを始める
+		Recorder.AccessUnits.clear();
+		Receiver.SetAudioPacketID(0x0111);
+		REQUIRE(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Audio) != nullptr);
+		CHECK(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Audio)->GetPacketID() != 0x0110);
+		InputFilter(*pParser, Concat({
+			MakeMPUTLV(0x0110, 51, true, MakeMPUPayload(0, 3, {HexBytes("20000A0B")})),
+			MakeMPUTLV(0x0111, 71, true, MakeMPUPayload(0, 3, {HexBytes("20000C0D")})),
+			MakeTLV(0xFF, ByteArray(16, 0xFF))}), 4096);
+		REQUIRE(Recorder.AccessUnits.size() == 1);
+		CHECK(Recorder.AccessUnits[0].PacketID == 0x0111);
+		// MPU 3 の時刻は 0x0111 には無い
+		CHECK_FALSE(Recorder.AccessUnits[0].HasTimestamp);
+	}
+
+	SECTION("TimestampDeviation") {
+		// NTP の時刻から 10 秒以上離れた時刻は無効にする
+		const MediaStreamPackets Far = MakeMediaStreamPackets(Time, Time - (11ULL << 32));
+		Receiver.SetAudioPacketID(0x0110);
+		InputFilter(*pParser, Far.Signaling, 4096);
+		InputFilter(*pParser, Far.Media, 4096);
+		REQUIRE(Recorder.AccessUnits.size() == 1);
+		CHECK_FALSE(Recorder.AccessUnits[0].HasTimestamp);
+	}
+
+	SECTION("Reset") {
+		Receiver.SetVideoPacketID(0x0100);
+		InputFilter(*pParser, Packets.Signaling, 4096);
+		Receiver.Reset();
+		CHECK(Receiver.GetVideoPacketID() == MMT_PACKET_ID_INVALID);
+		CHECK_FALSE(Receiver.HasNTPTime());
+		CHECK(Receiver.GetAssembler(MMTMediaReceiver::MediaType::Video) == nullptr);
+		InputFilter(*pParser, Packets.Media, 4096);
+		CHECK(Recorder.AccessUnits.empty());
+	}
+}
+
+namespace
+{
+	class StreamIDRecorder
+		: public LibISDB::SingleIOFilter
+	{
+	public:
+		const LibISDB::CharType * GetObjectName() const noexcept override { return LIBISDB_STR("StreamIDRecorder"); }
+
+		void SetActiveServiceID(std::uint16_t ServiceID) override { this->ServiceID = ServiceID; }
+		void SetActiveVideoPID(std::uint16_t PID, bool ServiceChanged) override { VideoPID = PID; }
+		void SetActiveAudioPID(std::uint16_t PID, bool ServiceChanged) override { AudioPID = PID; }
+		void SetActiveVideoPacketID(std::uint16_t PacketID, bool ServiceChanged) override { VideoPacketID = PacketID; }
+		void SetActiveAudioPacketID(std::uint16_t PacketID, bool ServiceChanged) override { AudioPacketID = PacketID; }
+
+		std::uint16_t ServiceID = LibISDB::SERVICE_ID_INVALID;
+		std::uint16_t VideoPID = 0;
+		std::uint16_t AudioPID = 0;
+		std::uint16_t VideoPacketID = 0;
+		std::uint16_t AudioPacketID = 0;
+	};
+
+	class TestEngine
+		: public LibISDB::TSEngine
+	{
+	public:
+		std::vector<std::uint8_t> VideoStreamTypes;
+		std::vector<std::uint8_t> AudioStreamTypes;
+		std::vector<std::uint16_t> Services;
+
+	protected:
+		void OnServiceChanged(std::uint16_t ServiceID) override { Services.push_back(ServiceID); }
+		void OnVideoStreamTypeChanged(std::uint8_t StreamType) override { VideoStreamTypes.push_back(StreamType); }
+		void OnAudioStreamTypeChanged(std::uint8_t StreamType) override { AudioStreamTypes.push_back(StreamType); }
+	};
+}
+
+TEST_CASE("TSEngineMMT", "[mmt][engine]")
+{
+	using namespace LibISDB;
+
+	StreamPacketParserFilter *pParser = new StreamPacketParserFilter;
+	AnalyzerFilter *pAnalyzer = new AnalyzerFilter;
+	MMTAnalyzerFilter *pMMTAnalyzer = new MMTAnalyzerFilter;
+	StreamIDRecorder *pRecorder = new StreamIDRecorder;
+	TestEngine Engine;
+	REQUIRE(Engine.BuildEngine({pParser, pAnalyzer, pMMTAnalyzer, pRecorder}));
+	REQUIRE(pParser->StartStreaming());
+
+	const std::uint64_t Time = static_cast<std::uint64_t>(TEST_NTP_SECONDS) << 32;
+	const MediaStreamPackets Packets = MakeMediaStreamPackets(Time, Time);
+	InputFilter(*pParser, Packets.Signaling, 4096);
+
+	CHECK(Engine.GetStreamFormat() == StreamFormat::TLV);
+	CHECK(Engine.GetServiceID() == 0x0400);
+	CHECK(Engine.Services == std::vector<std::uint16_t> {0x0400});
+	CHECK(pRecorder->ServiceID == 0x0400);
+	// 既定は component_tag の最も小さいアセット
+	CHECK(pRecorder->VideoPacketID == 0x0100);
+	CHECK(pRecorder->AudioPacketID == 0x0110);
+	// MMT では PID は通知しない
+	CHECK(pRecorder->VideoPID == 0);
+	CHECK(pRecorder->AudioPID == 0);
+	CHECK(Engine.GetVideoStreamType() == STREAM_TYPE_H265);
+	// 音声は MH-音声コンポーネント記述子の stream_type
+	CHECK(Engine.GetAudioStreamType() == STREAM_TYPE_MPEG4_AUDIO);
+	// PLT の時点ではアセットが分からないので、MPT で stream_type が変わる
+	CHECK(Engine.VideoStreamTypes == std::vector<std::uint8_t> {STREAM_TYPE_INVALID, STREAM_TYPE_H265});
+	CHECK(Engine.AudioStreamTypes == std::vector<std::uint8_t> {STREAM_TYPE_INVALID, STREAM_TYPE_MPEG4_AUDIO});
+	CHECK(Engine.GetVideoStreamCount() == 1);
+	CHECK(Engine.GetAudioStreamCount() == 2);
+	CHECK(Engine.GetVideoComponentTag() == 0x00);
+	CHECK(Engine.GetAudioComponentTag() == 0x10);
+	// tlv_stream_id は MH-SDT が来るまで分からない
+	CHECK(Engine.GetTransportStreamID() == TRANSPORT_STREAM_ID_INVALID);
+
+	AnalyzerFilter::ServiceList TSList;
+	CHECK_FALSE(Engine.GetSelectableServiceList(&TSList));
+	MMTAnalyzerFilter::ServiceList MMTList;
+	REQUIRE(Engine.GetSelectableMMTServiceList(&MMTList));
+	REQUIRE(MMTList.size() == 1);
+	CHECK(MMTList[0].ServiceID == 0x0400);
+
+	SECTION("AudioStream") {
+		REQUIRE(Engine.SetAudioStream(1));
+		CHECK(pRecorder->AudioPacketID == 0x0111);
+		CHECK(Engine.GetAudioComponentTag() == 0x11);
+		CHECK_FALSE(Engine.SetAudioStream(2));
+	}
+
+	SECTION("MHSDT") {
+		InputFilter(*pParser,
+			MakeMMTPTLV(0x8004, 0, 0x02, MakeSignalingPayload(0,
+				MakeMessage16(0x8000, MakeSection(0x9F, 0xB110, 1, 0, 0, MakeSDTPayload(0x0400, UTF8(u8"テスト"), false))))),
+			4096);
+		CHECK(Engine.GetTransportStreamID() == 0xB110);
+		CHECK(Engine.GetNetworkID() == 0x000B);
+		// tlv_stream_id が分かっても選局し直さない
+		CHECK(Engine.Services == std::vector<std::uint16_t> {0x0400});
+		InputFilter(*pParser, Packets.Signaling, 4096);
+		CHECK(Engine.Services == std::vector<std::uint16_t> {0x0400});
+	}
+
+	SECTION("FormatChange") {
+		pRecorder->AudioPID = 0x1234;
+		InputFilter(*pParser, MakeTSStream(500), 4096);
+		CHECK(Engine.GetStreamFormat() == StreamFormat::TS);
+		CHECK(pRecorder->VideoPacketID == MMT_PACKET_ID_INVALID);
+		CHECK(pRecorder->AudioPacketID == MMT_PACKET_ID_INVALID);
+		CHECK(pRecorder->AudioPID == PID_INVALID);
+		CHECK(Engine.GetServiceID() == SERVICE_ID_INVALID);
+		CHECK(Engine.GetVideoStreamType() == STREAM_TYPE_UNINITIALIZED);
+		CHECK_FALSE(Engine.GetSelectableMMTServiceList(&MMTList));
+	}
+}
+
+namespace
+{
+	struct TestAudioAsset {
+		std::uint16_t PacketID;
+		std::uint16_t ComponentTag;
+		std::uint8_t StreamContent;
+		std::uint8_t ComponentType;
+		std::uint8_t SimulcastGroupTag;
+	};
+
+	// PLT と、映像 0x0100 と指定した音声アセットの MPT
+	ByteArray MakeAudioSelectionSignaling(std::uint8_t MPTVersion, std::initializer_list<TestAudioAsset> AudioAssets)
+	{
+		ByteArray MPT {0xFC, 0x02};
+		Append16(MPT, 0x0400);
+		Append16(MPT, 0x0000);
+		MPT.push_back(static_cast<std::uint8_t>(1 + AudioAssets.size()));
+		Append(MPT, MakeAsset(0x0100, LibISDB::MMT_ASSET_TYPE_HEV1, 0x0000));
+		for (const TestAudioAsset &e : AudioAssets) {
+			ByteArray Body {static_cast<std::uint8_t>(0xF0 | e.StreamContent), e.ComponentType};
+			Append16(Body, e.ComponentTag);
+			Body.push_back(0x11);
+			Body.push_back(e.SimulcastGroupTag);
+			Append(Body, HexBytes("5F6A706E"));
+			Append(MPT, MakeAsset(e.PacketID, LibISDB::MMT_ASSET_TYPE_MP4A, e.ComponentTag, MakeMMTDescriptor(0x8014, Body)));
+		}
+
+		std::vector<ByteArray> Packets;
+		Packets.push_back(MakeMMTPTLV(0x0000, 0, 0x02,
+			MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x80, 1, MakePLTPayload(0x0400, 0x0F00))))));
+		Packets.push_back(MakeMMTPTLV(0x0F00, MPTVersion, 0x02,
+			MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x20, MPTVersion, MPT)))));
+		for (int i = 0; i < 4; i++)
+			Packets.push_back(MakeTLV(0xFF, ByteArray(16, 0xFF)));
+		return Concat(Packets);
+	}
+
+	class AudioSelectionEngine
+		: public LibISDB::TSEngine
+	{
+	public:
+		// ViewerFilter の FDK と同じく 22.2ch を再生できないものとする
+		bool Play22_2ch = true;
+		bool Stereo = false;
+
+	protected:
+		bool IsAudioPlayable(std::uint8_t StreamType, const LibISDB::EventInfo::AudioInfo *pInfo) const override
+		{
+			if (pInfo == nullptr)
+				return true;
+			if (pInfo->StreamContent != LibISDB::MMT_AUDIO_STREAM_CONTENT_AAC)
+				return false;
+			if ((pInfo->ComponentType & LibISDB::MMT_AUDIO_MODE_MASK) == LibISDB::MMT_AUDIO_MODE_22_2)
+				return Play22_2ch;
+			return true;
+		}
+
+		bool IsStereoAudioPreferred() const override { return Stereo; }
+	};
+
+	constexpr std::uint8_t AAC = LibISDB::MMT_AUDIO_STREAM_CONTENT_AAC;
+	constexpr std::uint8_t ALS = LibISDB::MMT_AUDIO_STREAM_CONTENT_ALS;
+	constexpr std::uint8_t MODE_2CH = LibISDB::MMT_AUDIO_MODE_2_0;
+	constexpr std::uint8_t MODE_5_1CH = LibISDB::MMT_AUDIO_MODE_3_2_1;
+	constexpr std::uint8_t MODE_22_2CH = LibISDB::MMT_AUDIO_MODE_22_2;
+}
+
+TEST_CASE("TSEngineMMTAudioSelection", "[mmt][engine]")
+{
+	using namespace LibISDB;
+
+	StreamPacketParserFilter *pParser = new StreamPacketParserFilter;
+	MMTAnalyzerFilter *pMMTAnalyzer = new MMTAnalyzerFilter;
+	StreamIDRecorder *pRecorder = new StreamIDRecorder;
+	AudioSelectionEngine Engine;
+	REQUIRE(Engine.BuildEngine({pParser, pMMTAnalyzer, pRecorder}));
+	REQUIRE(pParser->StartStreaming());
+
+	// NHK BS8K の 22.2ch 番組の構成
+	const auto Input22_2ch =
+		[&](std::uint8_t Version) {
+			InputFilter(*pParser, MakeAudioSelectionSignaling(Version, {
+				{0x0110, 0x0010, AAC, MODE_22_2CH, 0x00},
+				{0x0111, 0x0011, AAC, MODE_5_1CH, 0x00},
+				{0x0112, 0x0012, AAC, MODE_2CH, 0x00},
+			}), 4096);
+		};
+
+	SECTION("Playable") {
+		Input22_2ch(1);
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+		CHECK(Engine.GetAudioComponentTag() == 0x10);
+		CHECK(Engine.GetDefaultAudioStream() == 0);
+		CHECK(Engine.IsAudioStreamPlayable(0));
+		CHECK_FALSE(Engine.IsAudioStreamPlayable(3));
+
+		EventInfo::AudioInfo Info;
+		REQUIRE(Engine.GetAudioComponentInfo(1, &Info));
+		CHECK(Info.StreamContent == AAC);
+		CHECK(Info.ComponentType == MODE_5_1CH);
+		CHECK(Info.ComponentTag == 0x11);
+		CHECK(Info.SimulcastGroupTag == 0x00);
+		CHECK(Info.LanguageCode == 0x6A706E);
+		CHECK_FALSE(Engine.GetAudioComponentInfo(3, &Info));
+
+		Engine.Play22_2ch = false;
+		CHECK_FALSE(Engine.IsAudioStreamPlayable(0));
+		CHECK(Engine.GetDefaultAudioStream() == 1);
+		Engine.Stereo = true;
+		CHECK(Engine.GetDefaultAudioStream() == 2);
+	}
+
+	SECTION("NotPlayable") {
+		// 選局時は再生できるもののうち component_tag が最小のもの
+		Engine.Play22_2ch = false;
+		Input22_2ch(1);
+		CHECK(pRecorder->AudioPacketID == 0x0111);
+		CHECK(Engine.GetAudioStream() == 1);
+		CHECK(Engine.GetAudioComponentTag() == 0x11);
+
+		// 利用者が選んだものはそのまま
+		REQUIRE(Engine.SetAudioStream(0));
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+	}
+
+	SECTION("Stereo") {
+		// 2ch で再生する場合はサイマル音声の AAC 2ch
+		Engine.Stereo = true;
+		Input22_2ch(1);
+		CHECK(pRecorder->AudioPacketID == 0x0112);
+		CHECK(Engine.GetAudioComponentTag() == 0x12);
+	}
+
+	SECTION("StereoNotSimulcast") {
+		// サイマル音声でない 2ch (解説音声など) は選ばない
+		Engine.Stereo = true;
+		InputFilter(*pParser, MakeAudioSelectionSignaling(1, {
+			{0x0110, 0x0010, AAC, MODE_5_1CH, 0xFF},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+	}
+
+	SECTION("ALS") {
+		InputFilter(*pParser, MakeAudioSelectionSignaling(1, {
+			{0x0110, 0x0010, ALS, MODE_2CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0111);
+		CHECK_FALSE(Engine.IsAudioStreamPlayable(0));
+	}
+
+	SECTION("NoPlayableAudio") {
+		InputFilter(*pParser, MakeAudioSelectionSignaling(1, {
+			{0x0110, 0x0010, ALS, MODE_2CH, 0x00},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+	}
+
+	SECTION("AudioChanged") {
+		Engine.Play22_2ch = false;
+
+		// 番組の冒頭は 2ch のみ
+		InputFilter(*pParser, MakeAudioSelectionSignaling(1, {
+			{0x0110, 0x0010, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+
+		// 同じ component_tag が 22.2ch になったので選び直す
+		Input22_2ch(2);
+		CHECK(pRecorder->AudioPacketID == 0x0111);
+
+		// 構成が同じなら利用者の選んだものを保つ
+		REQUIRE(Engine.SetAudioStream(2));
+		CHECK(pRecorder->AudioPacketID == 0x0112);
+		Input22_2ch(3);
+		CHECK(pRecorder->AudioPacketID == 0x0112);
+		CHECK(Engine.GetAudioComponentTag() == 0x12);
+
+		// 構成が変わったら既定の音声に戻す
+		InputFilter(*pParser, MakeAudioSelectionSignaling(4, {
+			{0x0110, 0x0010, AAC, MODE_5_1CH, 0x00},
+			{0x0111, 0x0011, AAC, MODE_2CH, 0x00},
+			{0x0112, 0x0012, AAC, MODE_2CH, 0xFF},
+		}), 4096);
+		CHECK(pRecorder->AudioPacketID == 0x0110);
+		CHECK(Engine.GetAudioComponentTag() == 0x10);
+	}
+}
+
+#include "../LibISDB/MediaParsers/AACDownmix.hpp"
+
+TEST_CASE("AACDownmix", "[mediaparser][aac]")
+{
+	using namespace LibISDB;
+
+	enum {
+		FC, FLc, FRc, FL, FR, SiL, SiR, BL, BR, BC, LFE1, LFE2,
+		TpFC, TpFL, TpFR, TpSiL, TpSiR, TpC, TpBL, TpBR, TpBC, BtFC, BtFL, BtFR,
+	};
+
+	const auto Downmix =
+		[](std::initializer_list<std::pair<int, std::int16_t>> Values) {
+			std::int16_t Src[AAC_22_2CH_CHANNEL_COUNT * 2] = {};
+			for (const auto &e : Values) {
+				Src[e.first] = e.second;
+				Src[AAC_22_2CH_CHANNEL_COUNT + e.first] = e.second;
+			}
+			std::vector<std::int16_t> Dst(12, 0x7777);
+			DownmixAAC22_2chTo5_1ch(Src, Dst.data(), 2);
+			CHECK(std::equal(Dst.begin(), Dst.begin() + 6, Dst.begin() + 6));
+			Dst.resize(6);
+			return Dst;
+		};
+
+	// 出力は C, L, R, Ls, Rs, LFE
+	CHECK(Downmix({{FC, 1000}}) == std::vector<std::int16_t> {1000, 0, 0, 0, 0, 0});
+	CHECK(Downmix({{FL, 1000}, {FR, -1000}, {BL, 300}, {BR, -300}}) == std::vector<std::int16_t> {0, 1000, -1000, 300, -300, 0});
+	// -4.5 dB
+	CHECK(Downmix({{FLc, 1000}}) == std::vector<std::int16_t> {596, 596, 0, 0, 0, 0});
+	CHECK(Downmix({{SiR, 1000}}) == std::vector<std::int16_t> {0, 0, 596, 0, 596, 0});
+	CHECK(Downmix({{TpSiL, 1000}}) == std::vector<std::int16_t> {0, 596, 0, 596, 0, 0});
+	// 上層・下層は 0 dB
+	CHECK(Downmix({{TpFL, 1000}, {BtFR, 1000}, {TpFC, 100}, {BtFC, 100}}) == std::vector<std::int16_t> {200, 1000, 1000, 0, 0, 0});
+	CHECK(Downmix({{TpBL, 1000}, {TpBR, -1000}}) == std::vector<std::int16_t> {0, 0, 0, 1000, -1000, 0});
+	// TpC は C に -6 dB、Ls/Rs に -6 dB
+	CHECK(Downmix({{TpC, 1000}}) == std::vector<std::int16_t> {500, 0, 0, 500, 500, 0});
+	// BC と TpBC は Ls/Rs に -3 dB
+	CHECK(Downmix({{BC, 1000}}) == std::vector<std::int16_t> {0, 0, 0, 707, 707, 0});
+	CHECK(Downmix({{TpBC, 1000}}) == std::vector<std::int16_t> {0, 0, 0, 707, 707, 0});
+	// LFE は 2 つの和に -3 dB
+	CHECK(Downmix({{LFE1, 1000}, {LFE2, 1000}}) == std::vector<std::int16_t> {0, 0, 0, 0, 0, 1414});
+	// 飽和
+	CHECK(Downmix({{FL, 32767}, {TpFL, 32767}, {FR, -32768}, {BtFR, -32768}}) == std::vector<std::int16_t> {0, 32767, -32768, 0, 0, 0});
+}
+
+
 
 
 #ifdef LIBISDB_TEST_WMAIN

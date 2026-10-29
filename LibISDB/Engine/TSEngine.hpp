@@ -32,7 +32,9 @@
 #include "../Filters/SourceFilter.hpp"
 #include "../Filters/AnalyzerFilter.hpp"
 #include "../Filters/StreamPacketParserFilter.hpp"
+#include "../Filters/MMTAnalyzerFilter.hpp"
 #include <initializer_list>
+#include <memory>
 
 
 namespace LibISDB
@@ -44,6 +46,7 @@ namespace LibISDB
 		, protected SourceFilter::EventListener
 		, protected AnalyzerFilter::EventListener
 		, protected StreamPacketParserFilter::EventListener
+		, protected MMTAnalyzerFilter::EventListener
 	{
 	public:
 		enum class OneSegSelectType {
@@ -100,6 +103,12 @@ namespace LibISDB
 		bool SetAudioStream(int StreamIndex);
 		int GetAudioStream() const;
 		uint8_t GetAudioComponentTag() const;
+		// 以下は現在のサービスの音声
+		// MH-音声コンポーネント記述子の内容 (MMT の場合のみ)
+		bool GetAudioComponentInfo(int StreamIndex, ReturnArg<EventInfo::AudioInfo> Info) const;
+		bool IsAudioStreamPlayable(int StreamIndex) const;
+		// 既定の音声 (MMT は ARIB TR-B39 第1部 第2編 4.7.2 の規定による)
+		int GetDefaultAudioStream() const;
 
 		void SetStartStreamingOnSourceOpen(bool Start);
 
@@ -108,7 +117,10 @@ namespace LibISDB
 		virtual uint16_t GetSelectableServiceID(int Index) const;
 		virtual uint16_t GetDefaultServiceID() const;
 		virtual int GetSelectableServiceIndexByID(uint16_t ServiceID) const;
+		// TS の場合のみ
 		virtual bool GetSelectableServiceList(AnalyzerFilter::ServiceList *pList) const;
+		// MMT の場合のみ
+		virtual bool GetSelectableMMTServiceList(MMTAnalyzerFilter::ServiceList *pList) const;
 
 	// ObjectBase
 		const CharType * GetObjectName() const noexcept override { return LIBISDB_STR("TSEngine"); }
@@ -125,13 +137,84 @@ namespace LibISDB
 		void OnEITUpdated(AnalyzerFilter *pAnalyzer) override;
 
 	// StreamPacketParserFilter::EventListener
-		void OnStreamFormatChanged(StreamPacketParserFilter *pParser, StreamFormat Format) override {}
+		void OnStreamFormatChanged(StreamPacketParserFilter *pParser, StreamFormat Format) override;
+
+	// MMTAnalyzerFilter::EventListener
+		void OnPLTUpdated(MMTAnalyzerFilter *pAnalyzer) override;
+		void OnMPTUpdated(MMTAnalyzerFilter *pAnalyzer, uint16_t ServiceID) override;
+		void OnMHSDTUpdated(MMTAnalyzerFilter *pAnalyzer) override;
+		void OnMHEITUpdated(MMTAnalyzerFilter *pAnalyzer) override;
+
+		/**
+		 サービス情報の取得元
+
+		 TS は AnalyzerFilter、MMT は MMTAnalyzerFilter から取得する。
+		 ストリームの ID は TS では PID、MMT では packet_id。
+		 MMT の component_tag は運用上 0x0000 - 0x007F (ARIB TR-B39 第 4 部 表 15.2-1) なので 8 ビットで扱う。
+		*/
+		class ServiceSource
+		{
+		public:
+			virtual ~ServiceSource() = default;
+
+			virtual bool IsMMT() const noexcept = 0;
+			virtual uint16_t GetInvalidStreamID() const noexcept = 0;
+			// transport_stream_id / tlv_stream_id
+			virtual uint16_t GetStreamID() const = 0;
+			virtual uint16_t GetNetworkID() const = 0;
+
+			virtual int GetServiceCount() const = 0;
+			// Index が負の場合は既定のサービス
+			virtual uint16_t GetServiceID(int Index) const = 0;
+			virtual int GetServiceIndexByID(uint16_t ServiceID) const = 0;
+			// PMT / MPT を取得済みか
+			virtual bool IsServiceInfoAcquired(int Index) const = 0;
+			virtual bool Is1SegStream() const { return false; }
+			virtual bool Is1SegService(int Index) const { return false; }
+			virtual uint16_t Get1SegServiceIDByIndex(int Index) const { return SERVICE_ID_INVALID; }
+			virtual uint16_t GetFirst1SegServiceID() const { return SERVICE_ID_INVALID; }
+
+			virtual int GetVideoStreamCount(int ServiceIndex) const = 0;
+			virtual uint16_t GetVideoStreamID(int ServiceIndex, int StreamIndex) const = 0;
+			virtual uint8_t GetVideoStreamType(int ServiceIndex, int StreamIndex) const = 0;
+			virtual uint8_t GetVideoComponentTag(int ServiceIndex, int StreamIndex) const = 0;
+			virtual int GetVideoIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const = 0;
+
+			virtual int GetAudioStreamCount(int ServiceIndex) const = 0;
+			virtual uint16_t GetAudioStreamID(int ServiceIndex, int StreamIndex) const = 0;
+			virtual uint8_t GetAudioStreamType(int ServiceIndex, int StreamIndex) const = 0;
+			virtual uint8_t GetAudioComponentTag(int ServiceIndex, int StreamIndex) const = 0;
+			virtual int GetAudioIndexByComponentTag(int ServiceIndex, uint8_t ComponentTag) const = 0;
+			virtual bool GetAudioComponentInfo(int ServiceIndex, int StreamIndex, ReturnArg<EventInfo::AudioInfo> Info) const { return false; }
+
+			virtual uint16_t GetEventID(int ServiceIndex) const = 0;
+		};
+
+		class TSServiceSource;
+		class MMTServiceSource;
 
 	// TSEngine
+		// 入力中のストリームの形式に対応する取得元 (解析フィルタが無い場合は nullptr)
+		const ServiceSource * GetServiceSource() const;
+		bool IsMMTStream() const;
 		bool SelectService(uint16_t ServiceID, bool No1Seg = false);
 		void ResetStatus();
 		void SetVideoPID(uint16_t PID, bool ServiceChanged);
 		void SetAudioPID(uint16_t PID, bool ServiceChanged);
+		// ID は GetServiceSource() の形式のもの
+		void SetVideoStreamID(uint16_t ID, bool ServiceChanged);
+		void SetAudioStreamID(uint16_t ID, bool ServiceChanged);
+		void ResetVideoAndAudioStreamID(bool ServiceChanged);
+		void UpdateService(const ServiceSource *pSource);
+		void UpdateEvent(const ServiceSource *pSource);
+		bool IsAudioStreamPlayable(const ServiceSource *pSource, int ServiceIndex, int StreamIndex) const;
+		int GetDefaultAudioStreamIndex(const ServiceSource *pSource, int ServiceIndex) const;
+		void GetAudioComponentList(const ServiceSource *pSource, int ServiceIndex, EventInfo::AudioInfoList *pList) const;
+
+		// 既定の音声の選択に使う (pInfo は MH-音声コンポーネント記述子の内容、無い場合は nullptr)
+		virtual bool IsAudioPlayable(uint8_t StreamType, const EventInfo::AudioInfo *pInfo) const { return true; }
+		// 2ch で再生する場合 (サイマル音声の AAC 2ch を優先する)
+		virtual bool IsStereoAudioPreferred() const { return false; }
 
 		virtual void OnEngineClose() {}
 		virtual void OnEngineClosed() {}
@@ -148,6 +231,11 @@ namespace LibISDB
 		SourceFilter *m_pSource;
 		AnalyzerFilter *m_pAnalyzer;
 		StreamPacketParserFilter *m_pStreamParser;
+		MMTAnalyzerFilter *m_pMMTAnalyzer;
+		std::unique_ptr<ServiceSource> m_TSServiceSource;
+		std::unique_ptr<ServiceSource> m_MMTServiceSource;
+		bool m_IsMMTStreamStarted;
+		StreamFormat m_LastStreamFormat;
 
 		uint16_t m_CurTransportStreamID;
 		uint16_t m_CurServiceID;
@@ -161,6 +249,8 @@ namespace LibISDB
 		uint8_t m_CurVideoComponentTag;
 		int m_CurAudioStream;
 		uint8_t m_CurAudioComponentTag;
+		// 選択中のサービスの音声の構成 (MMT)
+		EventInfo::AudioInfoList m_AudioComponentList;
 		uint16_t m_CurEventID;
 
 		bool m_StartStreamingOnSourceOpen;
