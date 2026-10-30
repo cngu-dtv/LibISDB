@@ -1372,9 +1372,10 @@ namespace
 	{
 		ByteArray Payload {0xFC, 0x02};
 		Append16(Payload, ServiceID);
-		const ByteArray AccessControl = MakeMMTDescriptor(0x8004, HexBytes("0005000F10"));
-		Append16(Payload, static_cast<std::uint16_t>(AccessControl.size()));
-		Append(Payload, AccessControl);
+		ByteArray MPTDescriptors = MakeMMTDescriptor(0x8004, HexBytes("0005000F10"));
+		Append(MPTDescriptors, MakeMMTDescriptor(0x8034, HexBytes("1F1FF100FFA100FFA04000F170")));
+		Append16(Payload, static_cast<std::uint16_t>(MPTDescriptors.size()));
+		Append(Payload, MPTDescriptors);
 		std::vector<ByteArray> Assets;
 		// MPU タイムスタンプ記述子だけが変わる
 		ByteArray MPUTimestamp;
@@ -1595,6 +1596,56 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 		CHECK(pService->GetProviderName(&Text));
 		CHECK(Text == LIBISDB_STR("ＢＳ朝日"));
 		CHECK_FALSE(pService->GetServiceName(&Text));
+	}
+
+	SECTION("ApplicationService") {
+		// 実放送 (NHK BSP4K / 4K QVC) の MPT の記述子
+		ByteArray Data = MakeMMTDescriptor(0x8034, HexBytes(
+			"1F1FF900FFA200FFD24000FEE16000FEE26100FEE36200FEE47000FEE57100FEE67200FEE75000FEE9FF00FFEB"));
+		Append(Data, MakeMMTDescriptor(0x8034, HexBytes("1F1FF100FFA100FFA04000F170")));
+		// データ伝送メッセージ無し、AIT は packet_id 以外の位置、私的データ付き
+		Append(Data, MakeMMTDescriptor(0x8034, HexBytes("100030" "02""20010DB8000000000000000000000001" "20010DB8000000000000000000000002" "1F90" "FFA3" "AB")));
+		// EMT が足りない
+		Append(Data, MakeMMTDescriptor(0x8034, HexBytes("1F1FC200FFA200FFD24000FEE1")));
+
+		MMTDescriptorBlock Block;
+		REQUIRE(Block.ParseBlock(Data.data(), Data.size()) == 3);
+
+		std::vector<const ApplicationServiceDescriptor *> List;
+		Block.EnumDescriptors<ApplicationServiceDescriptor>(
+			[&](const ApplicationServiceDescriptor *pDesc) { List.push_back(pDesc); });
+		REQUIRE(List.size() == 3);
+
+		CHECK(List[0]->GetApplicationFormat() == ApplicationServiceDescriptor::APPLICATION_FORMAT_HTML5);
+		CHECK(List[0]->GetDocumentResolution() == ApplicationServiceDescriptor::DOCUMENT_RESOLUTION_3840x2160);
+		CHECK(List[0]->GetDefaultAITFlag());
+		CHECK(List[0]->GetDTMessageFlag());
+		CHECK(List[0]->GetAITPacketID() == 0xFFA2);
+		CHECK(List[0]->GetDTMessagePacketID() == 0xFFD2);
+		REQUIRE(List[0]->GetEMTCount() == 9);
+		CHECK(List[0]->GetEMTInfo(0)->EMTTag == 0x40);
+		CHECK(List[0]->GetEMTPacketID(0) == 0xFEE1);
+		CHECK(List[0]->GetEMTInfo(8)->EMTTag == 0xFF);
+		CHECK(List[0]->GetEMTPacketID(8) == 0xFFEB);
+		CHECK(List[0]->GetEMTInfo(9) == nullptr);
+		CHECK(List[0]->GetEMTPacketID(9) == MMT_PACKET_ID_INVALID);
+		CHECK(List[0]->GetPrivateData()->GetSize() == 0);
+
+		CHECK(List[1]->GetAITPacketID() == 0xFFA1);
+		CHECK(List[1]->GetDTMessagePacketID() == 0xFFA0);
+		REQUIRE(List[1]->GetEMTCount() == 1);
+		CHECK(List[1]->GetEMTInfo(0)->EMTTag == 0x40);
+		CHECK(List[1]->GetEMTPacketID(0) == 0xF170);
+
+		CHECK(List[2]->GetDocumentResolution() == ApplicationServiceDescriptor::DOCUMENT_RESOLUTION_1920x1080);
+		CHECK_FALSE(List[2]->GetDefaultAITFlag());
+		CHECK_FALSE(List[2]->GetDTMessageFlag());
+		CHECK(List[2]->GetAITLocationInfo().LocationType == MMTGeneralLocationInfo::LOCATION_TYPE_IPV6);
+		CHECK(List[2]->GetAITLocationInfo().PacketID == 0xFFA3);
+		CHECK(List[2]->GetAITPacketID() == MMT_PACKET_ID_INVALID);
+		CHECK(List[2]->GetDTMessagePacketID() == MMT_PACKET_ID_INVALID);
+		CHECK(List[2]->GetEMTCount() == 0);
+		CHECK(List[2]->GetPrivateData()->GetSize() == 1);
 	}
 }
 
@@ -2001,6 +2052,15 @@ TEST_CASE("MMTAnalyzerFilter", "[mmt][filter]")
 	REQUIRE(Service.ECMList.size() == 1);
 	CHECK(Service.ECMList[0].CASystemID == 0x0005);
 	CHECK(Service.ECMList[0].PacketID == 0x0F10);
+	REQUIRE(Service.ApplicationServiceList.size() == 1);
+	CHECK(Service.ApplicationServiceList[0].ApplicationFormat == ApplicationServiceDescriptor::APPLICATION_FORMAT_HTML5);
+	CHECK(Service.ApplicationServiceList[0].DocumentResolution == ApplicationServiceDescriptor::DOCUMENT_RESOLUTION_3840x2160);
+	CHECK(Service.ApplicationServiceList[0].DefaultAITFlag);
+	CHECK(Service.ApplicationServiceList[0].AITPacketID == 0xFFA1);
+	CHECK(Service.ApplicationServiceList[0].DTMessagePacketID == 0xFFA0);
+	REQUIRE(Service.ApplicationServiceList[0].EMTList.size() == 1);
+	CHECK(Service.ApplicationServiceList[0].EMTList[0].EMTTag == 0x40);
+	CHECK(Service.ApplicationServiceList[0].EMTList[0].PacketID == 0xF170);
 	CHECK(Service.ServiceName == LIBISDB_STR("テスト４Ｋ"));
 	CHECK(Service.ProviderName == LIBISDB_STR("ＮＨＫ"));
 	CHECK(Service.ServiceType == 0x01);

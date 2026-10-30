@@ -507,6 +507,57 @@ namespace LibISDB
 		std::vector<MPUInfo> m_MPUList;
 	};
 
+	/** アプリケーションサービス記述子クラス (ARIB STD-B60 7.4.3.39) */
+	class ApplicationServiceDescriptor
+		: public MMTDescriptorTemplate<ApplicationServiceDescriptor, 0x8034>
+	{
+	public:
+		// application_format
+		static constexpr uint8_t APPLICATION_FORMAT_HTML5 = 0x1_u8; // ARIB-HTML5
+
+		// document_resolution (ARIB STD-B60 表 7-88)
+		static constexpr uint8_t DOCUMENT_RESOLUTION_1920x1080 = 0x0_u8;
+		static constexpr uint8_t DOCUMENT_RESOLUTION_3840x2160 = 0x1_u8;
+		static constexpr uint8_t DOCUMENT_RESOLUTION_7680x4320 = 0x2_u8;
+
+		struct EMTInfo {
+			uint8_t EMTTag;                      /**< EMT_tag */
+			MMTGeneralLocationInfo LocationInfo; /**< EMT_location_info */
+		};
+
+		ApplicationServiceDescriptor() noexcept;
+
+	// MMTDescriptorBase
+		void Reset() noexcept override;
+
+	// ApplicationServiceDescriptor
+		uint8_t GetApplicationFormat() const noexcept { return m_ApplicationFormat; }
+		uint8_t GetDocumentResolution() const noexcept { return m_DocumentResolution; }
+		bool GetDefaultAITFlag() const noexcept { return m_DefaultAITFlag; }
+		bool GetDTMessageFlag() const noexcept { return m_DTMessageFlag; }
+		const MMTGeneralLocationInfo & GetAITLocationInfo() const noexcept { return m_AITLocationInfo; }
+		const MMTGeneralLocationInfo & GetDTMessageLocationInfo() const noexcept { return m_DTMessageLocationInfo; }
+		int GetEMTCount() const noexcept { return static_cast<int>(m_EMTList.size()); }
+		const EMTInfo * GetEMTInfo(int Index) const;
+		// location_type が 0x00 以外の場合 (データ伝送メッセージが無い場合も) は MMT_PACKET_ID_INVALID
+		uint16_t GetAITPacketID() const noexcept;
+		uint16_t GetDTMessagePacketID() const noexcept;
+		uint16_t GetEMTPacketID(int Index) const noexcept;
+		const DataBuffer * GetPrivateData() const noexcept { return &m_PrivateData; }
+
+	protected:
+		bool StoreContents(const uint8_t *pPayload) override;
+
+		uint8_t m_ApplicationFormat;                     /**< application_format */
+		uint8_t m_DocumentResolution;                    /**< document_resolution */
+		bool m_DefaultAITFlag;                           /**< default_AIT_flag */
+		bool m_DTMessageFlag;                            /**< DT_message_flag */
+		MMTGeneralLocationInfo m_AITLocationInfo;        /**< AIT_location_info */
+		MMTGeneralLocationInfo m_DTMessageLocationInfo;  /**< DT_message_location_info */
+		std::vector<EMTInfo> m_EMTList;
+		DataBuffer m_PrivateData;                        /**< private_data */
+	};
+
 	/** MH-短形式イベント記述子クラス (ARIB STD-B60 7.4.3.17) */
 	class MHShortEventDescriptor
 		: public MMTDescriptorTemplate<MHShortEventDescriptor, 0xF001>

@@ -848,6 +848,7 @@ void MMTAnalyzerFilter::OnMPTTable(const MMTSingleTable *pTable)
 	Info.ApplicationAssetList.clear();
 	Info.OtherAssetList.clear();
 	Info.ECMList.clear();
+	Info.ApplicationServiceList.clear();
 
 	for (int i = 0; i < pMPTable->GetAssetCount(); i++) {
 		AssetInfo Asset;
@@ -902,6 +903,21 @@ void MMTAnalyzerFilter::OnMPTTable(const MMTSingleTable *pTable)
 			ECMInfo &ECM = Info.ECMList.emplace_back();
 			ECM.CASystemID = pAccessControlDesc->GetCASystemID();
 			ECM.PacketID = pAccessControlDesc->GetPacketID();
+		});
+
+	pMPTable->GetMPTDescriptorBlock()->EnumDescriptors<ApplicationServiceDescriptor>(
+		[&Info](const ApplicationServiceDescriptor *pAppServiceDesc) {
+			ApplicationServiceInfo &App = Info.ApplicationServiceList.emplace_back();
+			App.ApplicationFormat = pAppServiceDesc->GetApplicationFormat();
+			App.DocumentResolution = pAppServiceDesc->GetDocumentResolution();
+			App.DefaultAITFlag = pAppServiceDesc->GetDefaultAITFlag();
+			App.AITPacketID = pAppServiceDesc->GetAITPacketID();
+			App.DTMessagePacketID = pAppServiceDesc->GetDTMessagePacketID();
+			for (int i = 0; i < pAppServiceDesc->GetEMTCount(); i++) {
+				EMTInfo &EMT = App.EMTList.emplace_back();
+				EMT.EMTTag = pAppServiceDesc->GetEMTInfo(i)->EMTTag;
+				EMT.PacketID = pAppServiceDesc->GetEMTPacketID(i);
+			}
 		});
 
 	Info.IsMPTAcquired = true;

@@ -54,6 +54,13 @@ uint64_t Load64(const uint8_t *p)
 	return (static_cast<uint64_t>(Load32(&p[0])) << 32) | Load32(&p[4]);
 }
 
+uint16_t GetLocationPacketID(const MMTGeneralLocationInfo &Info)
+{
+	if (Info.LocationType != MMTGeneralLocationInfo::LOCATION_TYPE_PACKET_ID)
+		return MMT_PACKET_ID_INVALID;
+	return Info.PacketID;
+}
+
 }
 
 
@@ -840,6 +847,103 @@ bool MPUExtendedTimestampDescriptor::StoreContents(const uint8_t *pPayload)
 			Pos += AUInfoSize;
 		}
 	}
+
+	return true;
+}
+
+
+
+
+ApplicationServiceDescriptor::ApplicationServiceDescriptor() noexcept
+{
+	Reset();
+}
+
+
+void ApplicationServiceDescriptor::Reset() noexcept
+{
+	MMTDescriptorBase::Reset();
+
+	m_ApplicationFormat = 0;
+	m_DocumentResolution = 0;
+	m_DefaultAITFlag = false;
+	m_DTMessageFlag = false;
+	m_AITLocationInfo = MMTGeneralLocationInfo();
+	m_DTMessageLocationInfo = MMTGeneralLocationInfo();
+	m_EMTList.clear();
+	m_PrivateData.ClearSize();
+}
+
+
+const ApplicationServiceDescriptor::EMTInfo * ApplicationServiceDescriptor::GetEMTInfo(int Index) const
+{
+	if (static_cast<unsigned int>(Index) >= m_EMTList.size())
+		return nullptr;
+	return &m_EMTList[Index];
+}
+
+
+uint16_t ApplicationServiceDescriptor::GetAITPacketID() const noexcept
+{
+	return GetLocationPacketID(m_AITLocationInfo);
+}
+
+
+uint16_t ApplicationServiceDescriptor::GetDTMessagePacketID() const noexcept
+{
+	if (!m_DTMessageFlag)
+		return MMT_PACKET_ID_INVALID;
+	return GetLocationPacketID(m_DTMessageLocationInfo);
+}
+
+
+uint16_t ApplicationServiceDescriptor::GetEMTPacketID(int Index) const noexcept
+{
+	if (static_cast<unsigned int>(Index) >= m_EMTList.size())
+		return MMT_PACKET_ID_INVALID;
+	return GetLocationPacketID(m_EMTList[Index].LocationInfo);
+}
+
+
+bool ApplicationServiceDescriptor::StoreContents(const uint8_t *pPayload)
+{
+	if (m_Tag != TAG)
+		return false;
+	if (m_Length < 3)
+		return false;
+
+	m_ApplicationFormat  = pPayload[0] >> 4;
+	m_DocumentResolution = pPayload[1] >> 4;
+	m_DefaultAITFlag     = (pPayload[2] & 0x80) != 0;
+	m_DTMessageFlag      = (pPayload[2] & 0x40) != 0;
+	const int EMTCount   = pPayload[2] & 0x0F;
+
+	size_t Pos = 3;
+	size_t LocationSize = m_AITLocationInfo.Parse(&pPayload[Pos], m_Length - Pos);
+	if (LocationSize == 0)
+		return false;
+	Pos += LocationSize;
+
+	if (m_DTMessageFlag) {
+		LocationSize = m_DTMessageLocationInfo.Parse(&pPayload[Pos], m_Length - Pos);
+		if (LocationSize == 0)
+			return false;
+		Pos += LocationSize;
+	}
+
+	for (int i = 0; i < EMTCount; i++) {
+		if (Pos >= m_Length)
+			return false;
+		EMTInfo &Info = m_EMTList.emplace_back();
+		Info.EMTTag = pPayload[Pos++];
+		LocationSize = Info.LocationInfo.Parse(&pPayload[Pos], m_Length - Pos);
+		if (LocationSize == 0)
+			return false;
+		Pos += LocationSize;
+	}
+
+	if (Pos < m_Length)
+		m_PrivateData.SetData(&pPayload[Pos], m_Length - Pos);
 
 	return true;
 }

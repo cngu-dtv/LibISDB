@@ -147,6 +147,7 @@ MMTDescriptorBase * MMTDescriptorBlock::CreateDescriptorInstance(uint16_t Tag)
 	case MHLocalTimeOffsetDescriptor::TAG    : return new MHLocalTimeOffsetDescriptor;
 	case MHLogoTransmissionDescriptor::TAG   : return new MHLogoTransmissionDescriptor;
 	case MPUExtendedTimestampDescriptor::TAG : return new MPUExtendedTimestampDescriptor;
+	case ApplicationServiceDescriptor::TAG   : return new ApplicationServiceDescriptor;
 	case MHShortEventDescriptor::TAG         : return new MHShortEventDescriptor;
 	case MHExtendedEventDescriptor::TAG      : return new MHExtendedEventDescriptor;
 	}

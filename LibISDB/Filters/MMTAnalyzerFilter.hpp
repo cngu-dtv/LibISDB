@@ -81,6 +81,21 @@ namespace LibISDB
 			uint16_t PacketID;
 		};
 
+		struct EMTInfo {
+			uint8_t EMTTag;
+			uint16_t PacketID;
+		};
+
+		/** アプリケーションサービス記述子の内容 (packet_id 以外の位置は MMT_PACKET_ID_INVALID) */
+		struct ApplicationServiceInfo {
+			uint8_t ApplicationFormat;
+			uint8_t DocumentResolution;
+			bool DefaultAITFlag;
+			uint16_t AITPacketID;
+			uint16_t DTMessagePacketID; /**< データ伝送メッセージが無い場合も MMT_PACKET_ID_INVALID */
+			std::vector<EMTInfo> EMTList;
+		};
+
 		struct ServiceInfo {
 			bool IsMPTAcquired;
 			uint16_t ServiceID;
@@ -93,6 +108,7 @@ namespace LibISDB
 			AssetInfoList ApplicationAssetList;
 			AssetInfoList OtherAssetList;
 			std::vector<ECMInfo> ECMList;
+			std::vector<ApplicationServiceInfo> ApplicationServiceList;
 			uint8_t RunningStatus;
 			bool FreeCAMode;
 			String ProviderName;

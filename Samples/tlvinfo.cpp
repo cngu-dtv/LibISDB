@@ -708,6 +708,25 @@ template<typename TStream> void PrintAnalyzerInfo(
 			Out << std::endl;
 		}
 
+		for (const auto &App : Service.ApplicationServiceList) {
+			Out << LIBISDB_STR("    App service  : format ");
+			PrintHex(Out, App.ApplicationFormat, 1);
+			Out << LIBISDB_STR(" resolution ");
+			PrintHex(Out, App.DocumentResolution, 1);
+			Out << LIBISDB_STR(" default_AIT ") << (App.DefaultAITFlag ? 1 : 0) << LIBISDB_STR(" AIT ");
+			PrintHex(Out, App.AITPacketID, 4);
+			Out << LIBISDB_STR(" DT ");
+			PrintHex(Out, App.DTMessagePacketID, 4);
+			Out << std::endl;
+			for (const auto &EMT : App.EMTList) {
+				Out << LIBISDB_STR("      EMT        : tag ");
+				PrintHex(Out, EMT.EMTTag, 2);
+				Out << LIBISDB_STR(" packet_id ");
+				PrintHex(Out, EMT.PacketID, 4);
+				Out << std::endl;
+			}
+		}
+
 		const struct {
 			const LibISDB::CharType *pName;
 			const LibISDB::MMTAnalyzerFilter::AssetInfoList &List;
