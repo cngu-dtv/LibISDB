@@ -963,6 +963,46 @@ TEST_CASE("StreamPacketParserFilter", "[tlv][filter]")
 		CHECK(Filter.GetPacketCount().Scrambled == 40);
 		CHECK(Filter.GetTLVPacketCount().Null == 1);
 		CHECK(Filter.GetInputBytes() == Data.size());
+
+		LibISDB::StreamPacketParserFilter::MMTPacketCountList CountList;
+		REQUIRE(Filter.GetMMTPacketCountList(&CountList));
+		REQUIRE(CountList.size() == 3);
+		CHECK(CountList[0].PacketID == 0x0000);
+		CHECK(CountList[0].Count.Input == 1);
+		CHECK(CountList[0].Count.Output == 1);
+		CHECK(CountList[1].PacketID == 0x0100);
+		CHECK(CountList[1].Count.Input == 41);
+		CHECK(CountList[1].Count.Output == 41);
+		CHECK(CountList[1].Count.Scrambled == 40);
+		CHECK(CountList[2].PacketID == 0x0110);
+		CHECK(CountList[2].Count.Input == 6);
+		CHECK(CountList[2].Count.Scrambled == 0);
+	}
+
+	SECTION("MMTPacketCount") {
+		std::vector<ByteArray> NextList = MakeTLVPacketList(41);
+		NextList.erase(NextList.begin() + 4); // 0x0100 の packet_sequence_number 42
+		InputFilter(Filter, Concat(PacketList), 4096);
+		InputFilter(Filter, Concat(NextList), 4096);
+
+		LibISDB::StreamPacketParserFilter::MMTPacketCountList CountList;
+		REQUIRE(Filter.GetMMTPacketCountList(&CountList));
+		REQUIRE(CountList.size() == 3);
+		CHECK(CountList[0].Count.Input == 2);
+		CHECK(CountList[0].Count.ContinuityError == 0);
+		CHECK(CountList[1].Count.Input == 81);
+		CHECK(CountList[1].Count.ContinuityError == 1);
+		CHECK(CountList[2].Count.Input == 12);
+		CHECK(CountList[2].Count.ContinuityError == 0);
+		CHECK(Filter.GetPacketCount().ContinuityError == 1);
+
+		Filter.ResetErrorPacketCount();
+		REQUIRE(Filter.GetMMTPacketCountList(&CountList));
+		CHECK(CountList[1].Count.ContinuityError == 1);
+
+		Filter.Reset();
+		REQUIRE(Filter.GetMMTPacketCountList(&CountList));
+		CHECK(CountList.empty());
 	}
 
 	SECTION("TLVNullPacket") {
@@ -4077,6 +4117,137 @@ TEST_CASE("LogoDownloaderMMT", "[mmt][logo][filter]")
 		REQUIRE(Recorder.Logos[0].ServiceList.size() == 2);
 		CHECK(Recorder.Logos[0].ServiceList[0].ServiceID == 0x0400);
 		CHECK(Recorder.Logos[0].ServiceList[1].ServiceID == 0x0401);
+	}
+}
+
+
+
+
+#include "../LibISDB/Filters/TSPacketCounterFilter.hpp"
+#include <map>
+#include <chrono>
+#include <thread>
+
+namespace
+{
+	class TestPacketCounterFilter
+		: public LibISDB::TSPacketCounterFilter
+	{
+	public:
+		void SetBitRateUpdateInterval(LibISDB::TickClock::ClockType Interval)
+		{
+			m_VideoBitRate.SetUpdateInterval(Interval);
+			m_AudioBitRate.SetUpdateInterval(Interval);
+		}
+	};
+}
+
+TEST_CASE("TSPacketCounterFilterMMT", "[mmt][filter]")
+{
+	using namespace LibISDB;
+
+	auto pParser = std::make_unique<StreamPacketParserFilter>();
+	auto pCounter = std::make_unique<TestPacketCounterFilter>();
+	pParser->SetOutputFilter(pCounter.get(), pCounter->GetInputSink());
+	REQUIRE(pParser->StartStreaming());
+
+	std::map<std::uint16_t, std::uint32_t> SequenceMap;
+	auto Signaling = [&](std::uint16_t PacketID, const ByteArray &Message) {
+		return MakeMMTPTLV(PacketID, SequenceMap[PacketID]++, 0x02, MakeSignalingPayload(0, Message));
+	};
+	auto Media = [&](std::uint16_t PacketID, size_t Count, bool Scrambled) {
+		std::vector<ByteArray> List;
+		for (size_t i = 0; i < Count; i++) {
+			List.push_back(MakeTLV(0x03, MakeCompressedIP(0x001, 0, 0x60, 50000, 51216,
+				MakeMMTP(PacketID, SequenceMap[PacketID]++, 0x00, 1000, Scrambled ? MMT_SCRAMBLING_CONTROL_EVEN : -1))));
+		}
+		return Concat(List);
+	};
+
+	ByteArray PLT {0x02};
+	const std::pair<std::uint16_t, std::uint16_t> PackageList[] = {{0x0400, 0x0F00}, {0x0401, 0x0F01}};
+	for (const auto &[ServiceID, MPTPacketID] : PackageList) {
+		PLT.push_back(0x02);
+		Append16(PLT, ServiceID);
+		PLT.push_back(0x00);
+		Append16(PLT, MPTPacketID);
+	}
+	PLT.push_back(0x00); // num_of_ip_delivery
+
+	ByteArray OtherMPT {0xFC, 0x02};
+	Append16(OtherMPT, 0x0401);
+	Append16(OtherMPT, 0x0000); // MPT_descriptors_length
+	OtherMPT.push_back(0x02);
+	Append(OtherMPT, MakeAsset(0x0200, MMT_ASSET_TYPE_HEV1, 0x0000));
+	Append(OtherMPT, MakeAsset(0x0210, MMT_ASSET_TYPE_MP4A, 0x0010));
+
+	// 0x0400 のアセットは 0x0100 / 0x0110 / 0x0111 / 0x0130 / 0x0140、0x0401 のアセットは 0x0200 / 0x0210
+	auto MediaData = [&] {
+		return Concat({
+			Media(0x0100, 10, true),
+			Media(0x0110, 4, true),
+			Media(0x0130, 2, true),
+			Media(0x0140, 2, false),
+			Media(0x0200, 5, true),
+			Media(0x0210, 3, true),
+			Media(0x0300, 2, true)});
+	};
+
+	InputFilter(*pParser, Concat({
+		Signaling(0x0000, MakePAMessage(MakeMMTTable(0x80, 1, PLT))),
+		Signaling(0x0F00, MakePAMessage(MakeMMTTable(0x20, 1, MakeMPTPayload(0x0400, 1, false)))),
+		Signaling(0x0F01, MakePAMessage(MakeMMTTable(0x20, 1, OtherMPT)))}), 4096);
+	InputFilter(*pParser, MediaData(), 4096);
+	// サービスが選択されていなければ全て数える
+	CHECK(pCounter->GetScrambledPacketCount() == 26);
+	CHECK(pCounter->GetInputPacketCount() == 3 + 28);
+
+	pCounter->ResetScrambledPacketCount();
+	pCounter->SetActiveServiceID(0x0400);
+	InputFilter(*pParser, MediaData(), 4096);
+	CHECK(pCounter->GetScrambledPacketCount() == 16);
+
+	pCounter->ResetScrambledPacketCount();
+	pCounter->SetActiveServiceID(0x0401);
+	InputFilter(*pParser, MediaData(), 4096);
+	CHECK(pCounter->GetScrambledPacketCount() == 8);
+
+	SECTION("MPTUpdate") {
+		pCounter->SetActiveServiceID(0x0400);
+		pCounter->ResetScrambledPacketCount();
+		InputFilter(*pParser, Concat({
+			Signaling(0x0F00, MakePAMessage(MakeMMTTable(0x20, 2, MakeMPTPayload(0x0400, 2, true)))),
+			Media(0x0150, 3, true)}), 4096);
+		CHECK(pCounter->GetScrambledPacketCount() == 3);
+	}
+
+	SECTION("PLTUpdate") {
+		pCounter->SetActiveServiceID(0x0400);
+		pCounter->ResetScrambledPacketCount();
+		InputFilter(*pParser, Concat({
+			Signaling(0x0000, MakePAMessage(MakeMMTTable(0x80, 2, MakePLTPayload(0x0401, 0x0F01)))),
+			MediaData()}), 4096);
+		CHECK(pCounter->GetScrambledPacketCount() == 0);
+	}
+
+	SECTION("Reset") {
+		pCounter->Reset();
+		InputFilter(*pParser, MediaData(), 4096);
+		CHECK(pCounter->GetScrambledPacketCount() == 26);
+		CHECK(pCounter->GetInputPacketCount() == 28);
+	}
+
+	SECTION("BitRate") {
+		pCounter->SetBitRateUpdateInterval(TickClock::ClocksPerSec / 10);
+		pCounter->SetActiveServiceID(0x0400);
+		// 0x0210 は選択されていないサービスのアセット
+		pCounter->SetActiveVideoPacketID(0x0100, true);
+		pCounter->SetActiveAudioPacketID(0x0210, true);
+		InputFilter(*pParser, MediaData(), 4096);
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		InputFilter(*pParser, MediaData(), 4096);
+		CHECK(pCounter->GetVideoBitRate() > 0);
+		CHECK(pCounter->GetAudioBitRate() == 0);
 	}
 }
 

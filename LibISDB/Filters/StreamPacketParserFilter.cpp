@@ -80,6 +80,7 @@ void StreamPacketParserFilter::Reset()
 	m_TotalTLVPacketCount += m_TLVParser.GetPacketCount();
 	m_TLVParser.Reset();
 	m_TLVPacketSequence.SetDataCount(0);
+	m_MMTPacketCount.clear();
 	m_SyncLossCount = 0;
 
 	ResetFormat();
@@ -155,6 +156,22 @@ StreamPacketParserFilter::TLVPacketCountInfo StreamPacketParserFilter::GetTotalT
 }
 
 
+bool StreamPacketParserFilter::GetMMTPacketCountList(ReturnArg<MMTPacketCountList> List) const
+{
+	if (!List)
+		return false;
+
+	BlockLock Lock(m_FilterLock);
+
+	List->clear();
+	List->reserve(m_MMTPacketCount.size());
+	for (const auto &e : m_MMTPacketCount)
+		List->push_back({e.first, e.second});
+
+	return true;
+}
+
+
 bool StreamPacketParserFilter::AddEventListener(EventListener *pEventListener)
 {
 	return m_EventListenerList.AddEventListener(pEventListener);
@@ -178,6 +195,14 @@ void StreamPacketParserFilter::OnTLVPacket(TLVPacket *pPacket, TLVPacket::ParseR
 		++m_PacketCount.ContinuityError;
 		[[fallthrough]];
 	case TLVPacket::ParseResult::OK:
+		if (pPacket->HasMMTPHeader()) {
+			PacketCountInfo &Count = m_MMTPacketCount[pPacket->GetPacketID()];
+			++Count.Input;
+			if (Result == TLVPacket::ParseResult::ContinuityError)
+				++Count.ContinuityError;
+			if (pPacket->IsScrambled())
+				++Count.Scrambled;
+		}
 		if (pPacket->IsScrambled())
 			++m_PacketCount.Scrambled;
 		if (m_OutputNullPacket || (pPacket->GetPacketType() != TLV_PACKET_TYPE_NULL))
@@ -419,6 +444,8 @@ bool StreamPacketParserFilter::IsTLVLost(const DataBuffer *pBuffer) const
 void StreamPacketParserFilter::OutputTLVPacket(TLVPacket &Packet)
 {
 	++m_PacketCount.Output;
+	if (Packet.HasMMTPHeader())
+		++m_MMTPacketCount[Packet.GetPacketID()].Output;
 
 	if (m_OutputSequence) {
 		// 1 回の出力には同じ種類 (MMTP なら同じ packet_id) のパケットだけを含める

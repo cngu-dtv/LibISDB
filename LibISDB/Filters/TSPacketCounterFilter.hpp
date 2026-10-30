@@ -31,6 +31,8 @@
 #include "FilterBase.hpp"
 #include "../TS/PIDMap.hpp"
 #include "../TS/PSITable.hpp"
+#include "../MMT/MMTPacketIDMap.hpp"
+#include "../MMT/MMTTableBase.hpp"
 #include "../Utilities/BitRateCalculator.hpp"
 #include <atomic>
 #include <vector>
@@ -54,6 +56,8 @@ namespace LibISDB
 		void SetActiveServiceID(uint16_t ServiceID) override;
 		void SetActiveVideoPID(uint16_t PID, bool ServiceChanged) override;
 		void SetActiveAudioPID(uint16_t PID, bool ServiceChanged) override;
+		void SetActiveVideoPacketID(uint16_t PacketID, bool ServiceChanged) override;
+		void SetActiveAudioPacketID(uint16_t PacketID, bool ServiceChanged) override;
 
 	// SingleIOFilter
 		bool ProcessData(DataStream *pData) override;
@@ -65,6 +69,8 @@ namespace LibISDB
 		void ResetScrambledPacketCount();
 		void SetVideoPID(uint16_t PID);
 		void SetAudioPID(uint16_t PID);
+		void SetVideoPacketID(uint16_t PacketID);
+		void SetAudioPacketID(uint16_t PacketID);
 		unsigned long GetVideoBitRate() const;
 		unsigned long GetAudioBitRate() const;
 
@@ -74,11 +80,22 @@ namespace LibISDB
 		void UnmapServiceESs(size_t Index);
 		void OnPATSection(const PSITableBase *pTable, const PSISection *pSection);
 		void OnPMTSection(const PSITableBase *pTable, const PSISection *pSection);
+		int GetMMTServiceIndexByID(uint16_t ServiceID) const;
+		void MapMMTServiceAssets(size_t Index);
+		void UnmapMMTServiceAssets(size_t Index);
+		void OnPLTTable(const MMTSingleTable *pTable);
+		void OnMPTTable(const MMTSingleTable *pTable);
 
 		struct ServiceInfo {
 			uint16_t ServiceID;
 			uint16_t PMTPID;
 			std::vector<uint16_t> ESPIDList;
+		};
+
+		struct MMTServiceInfo {
+			uint16_t ServiceID;
+			uint16_t MPTPacketID;
+			std::vector<uint16_t> AssetPacketIDList;
 		};
 
 		class ESPIDMapTarget
@@ -92,17 +109,35 @@ namespace LibISDB
 			TSPacketCounterFilter *m_pTSPacketCounter;
 		};
 
+		class AssetPacketIDMapTarget
+			: public MMTPacketIDMapTarget
+		{
+		public:
+			AssetPacketIDMapTarget(TSPacketCounterFilter *pTSPacketCounter);
+			bool StorePacket(const TLVPacket *pPacket) override;
+
+		private:
+			TSPacketCounterFilter *m_pTSPacketCounter;
+		};
+
 		PIDMapManager m_PIDMapManager;
 		ESPIDMapTarget m_ESPIDMapTarget;
 
 		std::vector<ServiceInfo> m_ServiceList;
 		uint16_t m_TargetServiceID;
 
+		// m_MMTPacketIDMapManager の破棄時に割り当てを外すので、それより前に置く
+		AssetPacketIDMapTarget m_AssetPacketIDMapTarget;
+		MMTPacketIDMapManager m_MMTPacketIDMapManager;
+		std::vector<MMTServiceInfo> m_MMTServiceList;
+
 		std::atomic<unsigned long long> m_InputPacketCount;
 		std::atomic<unsigned long long> m_ScrambledPacketCount;
 
 		uint16_t m_VideoPID;
 		uint16_t m_AudioPID;
+		uint16_t m_VideoPacketID;
+		uint16_t m_AudioPacketID;
 		BitRateCalculator m_VideoBitRate;
 		BitRateCalculator m_AudioBitRate;
 	};

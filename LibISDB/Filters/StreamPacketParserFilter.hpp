@@ -36,6 +36,7 @@
 #include "../TLV/StreamFormatDetector.hpp"
 #include "../Base/EventListener.hpp"
 #include <vector>
+#include <map>
 #include <atomic>
 
 
@@ -57,6 +58,14 @@ namespace LibISDB
 		};
 
 		typedef TLVPacketParser::PacketCountInfo TLVPacketCountInfo;
+
+		/** packet_id ごとのパケット数 (FormatError と TransportError は常に 0) */
+		struct MMTPacketCountInfo {
+			uint16_t PacketID;
+			PacketCountInfo Count;
+		};
+
+		typedef std::vector<MMTPacketCountInfo> MMTPacketCountList;
 
 		static constexpr size_t DEFAULT_MAX_TLV_SEQUENCE_PACKET_COUNT = 32;
 		static constexpr unsigned long long FORMAT_LOST_BYTES = 256 * 1024;
@@ -81,6 +90,8 @@ namespace LibISDB
 		size_t GetMaxTLVSequencePacketCount() const noexcept { return m_MaxTLVSequencePacketCount; }
 		TLVPacketCountInfo GetTLVPacketCount() const;
 		TLVPacketCountInfo GetTotalTLVPacketCount() const;
+		// packet_id の昇順
+		bool GetMMTPacketCountList(ReturnArg<MMTPacketCountList> List) const;
 
 		bool AddEventListener(EventListener *pEventListener);
 		bool RemoveEventListener(EventListener *pEventListener);
@@ -114,6 +125,7 @@ namespace LibISDB
 		StreamFormat m_NotifiedStreamFormat;
 
 		TLVPacketCountInfo m_TotalTLVPacketCount;
+		std::map<uint16_t, PacketCountInfo> m_MMTPacketCount;
 		unsigned long long m_SyncLossCount;
 		std::vector<uint8_t> m_TSCheckBuffer;
 
