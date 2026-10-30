@@ -106,6 +106,7 @@ namespace LibISDB
 		uint16_t m_VideoPacketID;
 		uint16_t m_AudioPacketID;
 		uint64_t m_LastNTPTime;
+		uint8_t m_LastNTPLeapIndicator;
 		Handler *m_pHandler;
 	};
 

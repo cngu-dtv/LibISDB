@@ -47,7 +47,13 @@ namespace LibISDB
 		virtual void OnPacketIDUnmapped(uint16_t PacketID) {}
 	};
 
-	/** packet_id マップ管理クラス */
+	/**
+		packet_id マップ管理クラス
+
+		外した対象は OnPacketIDUnmapped() で即座に破棄される (テーブルは自身を delete する)。
+		StorePacket() の処理中に、処理中の対象の packet_id を UnmapTarget() / MapTarget() で
+		外してはならない。
+	*/
 	class MMTPacketIDMapManager
 	{
 	public:
@@ -57,6 +63,7 @@ namespace LibISDB
 		// 1 つのストリームには同じ packet_id の MMTP パケットだけが含まれていること
 		bool StorePacketStream(DataStream *pPacketStream);
 
+		// 既に割り当てがあればそれを外してから割り当てる
 		bool MapTarget(uint16_t PacketID, MMTPacketIDMapTarget *pMapTarget);
 		bool UnmapTarget(uint16_t PacketID);
 		void UnmapAllTargets();

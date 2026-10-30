@@ -102,8 +102,8 @@ namespace LibISDB
 			uint16_t MPTPacketID;
 			uint8_t MPTVersion;
 			AssetInfoList AssetList;
-			AssetInfoList VideoAssetList;
-			AssetInfoList AudioAssetList;
+			AssetInfoList VideoAssetList; /**< 受信機が選択できる映像 (component_tag 0x0000 - 0x000F) */
+			AssetInfoList AudioAssetList; /**< 受信機が選択できる音声 (component_tag 0x0010 - 0x002F) */
 			AssetInfoList CaptionAssetList;
 			AssetInfoList ApplicationAssetList;
 			AssetInfoList OtherAssetList;

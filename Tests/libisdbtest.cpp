@@ -1037,6 +1037,21 @@ TEST_CASE("StreamPacketParserFilter", "[tlv][filter]")
 		CHECK_FALSE(Collector.MixedStream);
 	}
 
+	SECTION("TSToTLVToTS") {
+		// TS の途中のパケットは、TLV を挟んだ後の TS と連結しない
+		ByteArray Data = MakeTSStream(1000);
+		// 途中で切れたパケット (transport_error_indicator = 1) が後の TS と連結されると TransportError になる
+		Data.insert(Data.end(), {0x47, 0x81, 0x00, 0x10});
+		Data.insert(Data.end(), 96, 0xA5);
+		for (std::uint32_t i = 0; Data.size() < 188000 + 512 * 1024; i++)
+			Append(Data, Concat(MakeTLVPacketList(i * 41)));
+		Append(Data, MakeTSStream(1000));
+		InputFilter(Filter, Data, 16384);
+		CHECK(Collector.Formats == std::vector<StreamFormat> {StreamFormat::TS, StreamFormat::TLV, StreamFormat::TS});
+		CHECK(Collector.TSPackets == 2000);
+		CHECK(Filter.GetPacketCount().TransportError == 0);
+	}
+
 	SECTION("StaleTS") {
 		// 短い TS の後に TLV が続く
 		ByteArray Data = MakeTSStream(150);
@@ -1454,6 +1469,12 @@ TEST_CASE("MMTString", "[mmt][string]")
 	CHECK(LibISDB::DecodeMMTString(Enclosed.data(), Enclosed.size(), &Text, LibISDB::ARIBStringDecoder::DecodeFlag::UnicodeSymbol));
 	CHECK(Text == EnclosedUnicodeText);
 
+	// JIS X0213 にもある記号 (ARIB STD-B62 表 5-2 に無いもの) は変換しない
+	const ByteArray Jis = UTF8(u8"♥☀㎞⑴");
+	const LibISDB::String JisText = LIBISDB_STR("♥☀㎞(1)");
+	CHECK(LibISDB::DecodeMMTString(Jis.data(), Jis.size(), &Text));
+	CHECK(Text == JisText);
+
 	// LATIN-1 SUPPLEMENT は変換しない
 	const ByteArray Latin1 = UTF8(u8"m²½");
 	const LibISDB::String Latin1Text = LIBISDB_STR("m²½");
@@ -1536,7 +1557,7 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 	}
 
 	SECTION("Descriptors") {
-		// 実放送 (BS4K) の記述子
+		// MH-音声コンポーネント、MH-ロゴ伝送、アクセス制御、MH-データ符号化方式、MH-サービスの各記述子
 		ByteArray Data = MakeMMTDescriptor(0x8014, HexBytes("F303001011FF5F6A706EE697A5E69CACE8AA9E"));
 		Append(Data, MakeMMTDescriptor(0x8025, HexBytes("01FE97F0020097050001060101070202")));
 		Append(Data, MakeMMTDescriptor(0x8004, HexBytes("000500A121")));
@@ -1599,7 +1620,7 @@ TEST_CASE("MMTDescriptorBlock", "[mmt][descriptor]")
 	}
 
 	SECTION("ApplicationService") {
-		// 実放送 (NHK BSP4K / 4K QVC) の MPT の記述子
+		// EMT が 9 本のものと 1 本のもの
 		ByteArray Data = MakeMMTDescriptor(0x8034, HexBytes(
 			"1F1FF900FFA200FFD24000FEE16000FEE26100FEE36200FEE47000FEE57100FEE67200FEE75000FEE9FF00FFEB"));
 		Append(Data, MakeMMTDescriptor(0x8034, HexBytes("1F1FF100FFA100FFA04000F170")));
@@ -2130,6 +2151,30 @@ TEST_CASE("MMTAnalyzerFilter", "[mmt][filter]")
 		CHECK(Service.MPTVersion == 8);
 		CHECK(Service.AssetList.size() == 5);
 		CHECK(Service.OtherAssetList.empty());
+	}
+
+	SECTION("AssetComponentTag") {
+		// データ放送用 (component_tag 0x0040 以降) の映像・音声は受信機が選択できるものに含めない
+		ByteArray Payload {0xFC, 0x02};
+		Append16(Payload, 0x0400);
+		Append16(Payload, 0);
+		Payload.push_back(4);
+		Append(Payload, MakeAsset(0x0100, MMT_ASSET_TYPE_HEV1, 0x0000));
+		Append(Payload, MakeAsset(0x0200, MMT_ASSET_TYPE_HEV1, 0x0040));
+		Append(Payload, MakeAsset(0x0110, MMT_ASSET_TYPE_MP4A, 0x002F));
+		Append(Payload, MakeAsset(0x0210, MMT_ASSET_TYPE_MP4A, 0x0041));
+		InputFilter(*pParser,
+			MakeMMTPTLV(0x0F00, 103, 0x02, MakeSignalingPayload(0, MakePAMessage(MakeMMTTable(0x20, 9, Payload)))), 4096);
+		REQUIRE(pAnalyzer->GetServiceInfo(0, &Service));
+		CHECK(Service.MPTVersion == 9);
+		CHECK(Service.AssetList.size() == 4);
+		REQUIRE(Service.VideoAssetList.size() == 1);
+		CHECK(Service.VideoAssetList[0].PacketID == 0x0100);
+		REQUIRE(Service.AudioAssetList.size() == 1);
+		CHECK(Service.AudioAssetList[0].PacketID == 0x0110);
+		REQUIRE(Service.OtherAssetList.size() == 2);
+		CHECK(Service.OtherAssetList[0].PacketID == 0x0200);
+		CHECK(Service.OtherAssetList[1].PacketID == 0x0210);
 	}
 
 	SECTION("Reset") {
@@ -2665,6 +2710,32 @@ TEST_CASE("MPUAssembler", "[mmt][mpu]")
 			CHECK(AU.PTS == Base + i * 1920);
 			CHECK(AU.DTS == AU.PTS);
 		}
+	}
+
+	SECTION("StartMidMPU") {
+		// MPU の途中から受信を始めた場合、最初のアクセスユニットは欠落の直後と同じ扱い
+		MPUAssembler Assembler(MPUAssembler::MediaType::Audio, &Recorder);
+		ByteArray Descriptors = MakeMPUTimestampDescriptor(4, Time);
+		ByteArray Extended {0xFB};
+		Append32(Extended, 48000);
+		Append16(Extended, 1024);
+		Append32(Extended, 4);
+		Extended.insert(Extended.end(), {0x3F, 0x00, 0x00, 0x01, 0x00, 0x00});
+		Append(Descriptors, MakeMMTDescriptor(0x8026, Extended));
+		MMTDescriptorBlock Block;
+		Block.ParseBlock(Descriptors.data(), Descriptors.size());
+		Assembler.UpdateTimestamps(&Block);
+
+		const ByteArray Frame = HexBytes("20000A0B0C0D0E0F");
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 60, false, MakeMPUPayload(0, 3, {Frame})));
+		REQUIRE(Recorder.AccessUnits.size() == 1);
+		CHECK(Recorder.AccessUnits[0].Discontinuity);
+		CHECK_FALSE(Recorder.AccessUnits[0].HasTimestamp);
+		StoreMPU(Assembler, MakeMPUTLV(0x0110, 61, true, MakeMPUPayload(0, 4, {Frame})));
+		REQUIRE(Recorder.AccessUnits.size() == 2);
+		CHECK_FALSE(Recorder.AccessUnits[1].Discontinuity);
+		REQUIRE(Recorder.AccessUnits[1].HasTimestamp);
+		CHECK(Recorder.AccessUnits[1].PTS == Base);
 	}
 
 	SECTION("Caption") {
@@ -3504,10 +3575,13 @@ TEST_CASE("MMTMediaReceiver", "[mmt][viewer]")
 		InputNTP(LastSecond, 0xF7000000, 1);
 		InputNTP(LastSecond, 0x00000000, 1);
 		CHECK(Recorder.LeapSeconds == std::vector<int> {-1});
-		// 削除: 23:59:58.97 -> 0:00:00.00
+		// 削除: 23:59:58.97 -> 0:00:00.00 (leap_indicator は 23:59:58 まで 2 で、飛んだ後は 0 に戻っていることがある)
+		InputNTP(LastSecond - 1, 0xF7000000, 2);
+		InputNTP(LastSecond + 1, 0x00000000, 0);
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1});
 		InputNTP(LastSecond - 1, 0xF7000000, 2);
 		InputNTP(LastSecond + 1, 0x00000000, 2);
-		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1});
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1, 1});
 		// leap_indicator が無ければ時刻の飛びは調整ではない
 		InputNTP(LastSecond, 0xF7000000, 0);
 		InputNTP(LastSecond, 0x00000000, 0);
@@ -3516,7 +3590,7 @@ TEST_CASE("MMTMediaReceiver", "[mmt][viewer]")
 		// 日の境界でない繰り返しは調整ではない
 		InputNTP(LastSecond - 10, 0xF7000000, 1);
 		InputNTP(LastSecond - 10, 0x00000000, 1);
-		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1});
+		CHECK(Recorder.LeapSeconds == std::vector<int> {-1, 1, 1});
 		CHECK(Receiver.GetNTPTime() == ((LastSecond - 10) << 32));
 	}
 
@@ -3688,7 +3762,7 @@ namespace
 		: public LibISDB::TSEngine
 	{
 	public:
-		// ViewerFilter の FDK と同じく 22.2ch を再生できないものとする
+		// 22.2ch を再生できるかは試験側で切り替える
 		bool Play22_2ch = true;
 		bool Stereo = false;
 
@@ -3725,7 +3799,7 @@ TEST_CASE("TSEngineMMTAudioSelection", "[mmt][engine]")
 	REQUIRE(Engine.BuildEngine({pParser, pMMTAnalyzer, pRecorder}));
 	REQUIRE(pParser->StartStreaming());
 
-	// NHK BS8K の 22.2ch 番組の構成
+	// 22.2ch を 5.1ch / 2ch とサイマル送出する構成
 	const auto Input22_2ch =
 		[&](std::uint8_t Version) {
 			InputFilter(*pParser, MakeAudioSelectionSignaling(Version, {
@@ -3902,7 +3976,7 @@ TEST_CASE("AACDownmix", "[mediaparser][aac]")
 	CHECK(AACDownmixLFELevelToGain(7) == 0.707f);
 	CHECK(AACDownmixLFELevelToGain(15) == 0.0f);
 
-	// DSE の MPEG4_ancillary_data() (NHK BS8K の 22.2ch 番組の実データ、全て既定値)
+	// DSE の MPEG4_ancillary_data() (係数は全て既定値)
 	AACDownmixCoefficients Parsed;
 	const ByteArray RealDSE = HexBytes("BCC01CAA010000BDB62270");
 	REQUIRE(ParseAACAncillaryData(RealDSE.data(), RealDSE.size(), &Parsed));

@@ -73,7 +73,7 @@ namespace LibISDB
 	constexpr uint8_t IP_PROTOCOL_UDP = 17_u8;
 
 	/*
-		NTP (ARIB STD-B60 3.2)
+		NTP (ARIB STD-B60 3.1)
 	*/
 	constexpr uint16_t NTP_PORT = 123_u16;
 	constexpr size_t NTP_PACKET_SIZE = 48;

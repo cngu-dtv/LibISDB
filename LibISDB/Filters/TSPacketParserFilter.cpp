@@ -74,6 +74,13 @@ void TSPacketParserFilter::Reset()
 }
 
 
+void TSPacketParserFilter::ClearPendingPacket()
+{
+	m_Packet.ClearSize();
+	m_OutOfSyncCount = 0;
+}
+
+
 bool TSPacketParserFilter::StartStreaming()
 {
 	if (!FilterBase::StartStreaming())

@@ -116,6 +116,8 @@ namespace LibISDB
 		size_t m_OutOfSyncCount;
 
 	protected:
+		void ClearPendingPacket();
+
 		bool m_OutputSequence;
 		size_t m_MaxSequencePacketCount;
 		bool m_OutputNullPacket;

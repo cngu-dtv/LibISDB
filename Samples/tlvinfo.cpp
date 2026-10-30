@@ -1061,29 +1061,24 @@ int main(int argc, char **argv)
 	CaptionRecorder Captions(pCaption);
 	pCaption->SetCaptionHandler(&Captions);
 	pAnalyzer->AddEventListener(&Captions);
-	LibISDB::EPGDatabase *pEPGDatabase = new LibISDB::EPGDatabase;
-	pEPGDatabase->SetNoPastEvents(false);
+	LibISDB::EPGDatabase EPGDatabase;
+	EPGDatabase.SetNoPastEvents(false);
 	LibISDB::EPGDatabaseFilter *pEPGDatabaseFilter = new LibISDB::EPGDatabaseFilter;
-	pEPGDatabaseFilter->SetEPGDatabase(pEPGDatabase);
+	pEPGDatabaseFilter->SetEPGDatabase(&EPGDatabase);
 	LibISDB::LogoDownloaderFilter *pLogoDownloader = new LibISDB::LogoDownloaderFilter;
 	LogoRecorder Logos;
 	pLogoDownloader->SetLogoHandler(&Logos);
 
-#define ASYNC
-#ifdef ASYNC
 	pSource->SetSourceMode(LibISDB::SourceFilter::SourceMode::Pull);
 	LibISDB::AsyncStreamingFilter *pAsyncStreaming = new LibISDB::AsyncStreamingFilter;
 	pAsyncStreaming->SetSourceFilter(pSource);
 	pAsyncStreaming->CreateBuffer(pAsyncStreaming->GetOutputBufferSize(), 3, 3);
-#endif
 
 	LibISDB::StreamSourceEngine Engine;
 
 	Engine.BuildEngine({
 		pSource,
-#ifdef ASYNC
 		pAsyncStreaming,
-#endif
 		pParser,
 		pInfo,
 		pAnalyzer,
@@ -1103,9 +1098,7 @@ int main(int argc, char **argv)
 	}
 
 	Engine.WaitForEndOfStream();
-#ifdef ASYNC
 	pAsyncStreaming->WaitForEndOfStream();
-#endif
 	Engine.CloseSource();
 	pMediaStats->Finish();
 
@@ -1226,7 +1219,7 @@ int main(int argc, char **argv)
 	PrintCaptions(Out, Captions, 40);
 
 	Out << std::endl;
-	PrintEPG(Out, pEPGDatabase);
+	PrintEPG(Out, &EPGDatabase);
 
 	Out << std::endl;
 	PrintLogos(Out, Logos);

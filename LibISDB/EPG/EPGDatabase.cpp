@@ -56,7 +56,7 @@ unsigned long long GetScheduleTime(unsigned long long CurTime, uint16_t TableID,
 }
 
 
-// EIT のイベント
+/** EIT のイベントの取得元 */
 class EITEventSectionSource
 	: public EPGDatabase::EventSectionSource
 {

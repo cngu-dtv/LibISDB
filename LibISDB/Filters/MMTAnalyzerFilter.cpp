@@ -865,14 +865,23 @@ void MMTAnalyzerFilter::OnMPTTable(const MMTSingleTable *pTable)
 
 		Info.AssetList.push_back(Asset);
 
+		// 受信機が選択できる映像・音声は component_tag で決まる (ARIB TR-B39 第1部 第4編 表 15.2-1)
 		switch (Asset.AssetType) {
 		case MMT_ASSET_TYPE_HEV1:
 		case MMT_ASSET_TYPE_HVC1:
-			Info.VideoAssetList.push_back(Asset);
+			if ((Asset.ComponentTag >= MMT_COMPONENT_TAG_VIDEO_FIRST)
+					&& (Asset.ComponentTag <= MMT_COMPONENT_TAG_VIDEO_LAST))
+				Info.VideoAssetList.push_back(Asset);
+			else
+				Info.OtherAssetList.push_back(Asset);
 			break;
 
 		case MMT_ASSET_TYPE_MP4A:
-			Info.AudioAssetList.push_back(Asset);
+			if ((Asset.ComponentTag >= MMT_COMPONENT_TAG_AUDIO_FIRST)
+					&& (Asset.ComponentTag <= MMT_COMPONENT_TAG_AUDIO_LAST))
+				Info.AudioAssetList.push_back(Asset);
+			else
+				Info.OtherAssetList.push_back(Asset);
 			break;
 
 		case MMT_ASSET_TYPE_STPP:

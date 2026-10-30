@@ -54,6 +54,7 @@ void MMTMediaReceiver::Reset()
 	m_VideoPacketID = MMT_PACKET_ID_INVALID;
 	m_AudioPacketID = MMT_PACKET_ID_INVALID;
 	m_LastNTPTime = 0;
+	m_LastNTPLeapIndicator = 0;
 
 	m_PacketIDMapManager.MapTarget(
 		MMT_PACKET_ID_PA, MMTSingleTable::CreateWithHandler<PLTable>(&MMTMediaReceiver::OnPLTTable, this));
@@ -125,6 +126,7 @@ void MMTMediaReceiver::OnNTPPacket(const TLVPacket *pPacket)
 	/*
 		うるう秒の調整 (ARIB TR-B39 第1部 第7編 7.12.2.2)
 		挿入では 8:59:59 JST (23:59:59 UTC) が繰り返され、削除では 8:59:59 JST が飛ぶ
+		削除の leap_indicator は 8:59:58 まで 2 なので、飛んだ後のパケットでは 0 に戻っていることがある
 	*/
 	if (m_LastNTPTime != 0) {
 		constexpr int64_t SECONDS_PER_DAY = 24 * 60 * 60;
@@ -139,7 +141,7 @@ void MMTMediaReceiver::OnNTPPacket(const TLVPacket *pPacket)
 				&& (Diff <= -90000 + 9000) && (Diff >= -90000 - 9000)
 				&& (Seconds % SECONDS_PER_DAY == SECONDS_PER_DAY - 1)) {
 			Step = -1;
-		} else if ((LeapIndicator == 2)
+		} else if (((m_LastNTPLeapIndicator == 2) || (LeapIndicator == 2))
 				&& (Diff >= 90000) && (Diff <= 90000 + 18000)
 				&& (LastSeconds % SECONDS_PER_DAY < SECONDS_PER_DAY - 1)
 				&& (Seconds / SECONDS_PER_DAY > LastSeconds / SECONDS_PER_DAY)) {
@@ -153,6 +155,7 @@ void MMTMediaReceiver::OnNTPPacket(const TLVPacket *pPacket)
 	}
 
 	m_LastNTPTime = Time;
+	m_LastNTPLeapIndicator = pPacket->GetNTPLeapIndicator();
 }
 
 

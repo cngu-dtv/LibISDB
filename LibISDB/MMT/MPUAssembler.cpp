@@ -398,6 +398,10 @@ void MPUAssembler::OnMPUChanged(uint32_t MPUSequenceNumber, bool RandomAccess)
 		m_Discontinuity = true;
 	}
 
+	// MPU の途中から受信を始めた場合は、その前が欠けているのと同じ扱いにする
+	if (!m_HasMPU && !RandomAccess)
+		m_Discontinuity = true;
+
 	if (m_MediaType == MediaType::Video) {
 		OutputVideoAccessUnit();
 	} else if (m_MediaType == MediaType::Caption) {

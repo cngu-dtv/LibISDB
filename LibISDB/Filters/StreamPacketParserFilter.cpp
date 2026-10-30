@@ -267,7 +267,6 @@ void StreamPacketParserFilter::InputTS(DataBuffer *pBuffer)
 	const size_t TLVPos = FindTLVStart(pData, Size);
 
 	if (TLVPos < Size) {
-		// バッファの途中で TLV に変わっている
 		LIBISDB_TRACE(LIBISDB_STR("StreamPacketParserFilter : TLV found at {}\n"), TLVPos);
 		if (TLVPos > 0) {
 			DataBuffer Head(pData, TLVPos);
@@ -380,6 +379,8 @@ void StreamPacketParserFilter::ResetFormat()
 	m_FormatDetector.Reset();
 	m_StreamFormat = StreamFormat::Unknown;
 	m_TSCheckBuffer.clear();
+	// TS の途中のパケットを次の TS と連結しない
+	ClearPendingPacket();
 }
 
 

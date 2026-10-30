@@ -252,7 +252,7 @@ void MMTSignalingParser::OnSection(const uint8_t *pData, size_t Size, bool IsExt
 	if (!m_Section.ParseHeader(IsExtended))
 		return;
 
-	// MH-DIT は CRC_32 を持たない
+	// MH-DIT は CRC_32 を持たない (ARIB STD-B60 7.3.3.15 が参照する ARIB STD-B63 の DIT で、ARIB STD-B10 の DIT と同じ構造)
 	if ((m_Section.GetTableID() != MMT_TABLE_ID_MH_DIT)
 			&& (CRC32MPEG2::Calc(pData, SectionSize) != 0)) {
 		if (m_CRCErrorCount < std::numeric_limits<unsigned long>::max())

@@ -164,6 +164,15 @@ namespace LibISDB
 	constexpr uint16_t MMT_COMPONENT_TAG_INVALID = 0xFFFF_u16;
 
 	/*
+		受信機が個別に選択できる映像・音声の component_tag (ARIB TR-B39 第1部 第4編 表 15.2-1)
+		0x0040 - 0x007F の映像・音声はデータ放送用で、受信機は個別に選択しない
+	*/
+	constexpr uint16_t MMT_COMPONENT_TAG_VIDEO_FIRST = 0x0000_u16; // 映像 (既定)
+	constexpr uint16_t MMT_COMPONENT_TAG_VIDEO_LAST  = 0x000F_u16;
+	constexpr uint16_t MMT_COMPONENT_TAG_AUDIO_FIRST = 0x0010_u16; // 音声 (既定)
+	constexpr uint16_t MMT_COMPONENT_TAG_AUDIO_LAST  = 0x002F_u16;
+
+	/*
 		字幕・文字スーパーの component_tag (ARIB TR-B39 第1部 第3編 8.2.3.1, 9.2.3.1)
 	*/
 	constexpr uint16_t MMT_COMPONENT_TAG_CAPTION_FIRST     = 0x0030_u16; // 字幕 (既定)

@@ -39,7 +39,9 @@ namespace LibISDB
 	/*
 		MH-EIT のイベントを EventInfo に変換する
 		TransportStreamID には tlv_stream_id が入る
-		映像・音声の stream_content と component_type は ARIB STD-B10 の値にする
+		映像の stream_content と component_type は ARIB STD-B10 の値にする
+		音声の stream_content は ARIB STD-B60 表 7-57 の値 (0x03 AAC / 0x04 ALS、STD-B10 では予約値) のまま、
+		component_type は STD-B10 と同じ値
 	*/
 	bool GetMHEventInfo(const MHEITTable *pTable, int Index, ReturnArg<EventInfo> Info);
 

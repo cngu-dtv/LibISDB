@@ -94,7 +94,6 @@ size_t TLVPacketParser::InputData(const uint8_t *pData, size_t Size, bool StopOn
 		Size -= Used;
 	}
 
-	// 同期位置を探す
 	m_SyncBuffer.insert(m_SyncBuffer.end(), pData, pData + Size);
 	m_UnsyncedBytes += Size;
 
@@ -165,7 +164,6 @@ size_t TLVPacketParser::ProcessSynced(const uint8_t *pData, size_t Size)
 		}
 
 		if ((CurSize >= 2) && !TLVPacket::IsValidPacketType(m_Packet.GetData()[1])) {
-			// 同期外れ
 			const uint8_t *pPacketData = m_Packet.GetData();
 			m_SyncBuffer.assign(pPacketData, pPacketData + CurSize);
 			LoseSync();

@@ -148,8 +148,8 @@ const CharType * GetComponentTypeText_ja(uint8_t StreamContent, uint8_t Componen
 		return GetVideoComponentTypeText_ja(ComponentType);
 
 	case 0x02:
-	case 0x03:
-	case 0x04:
+	case 0x03: // MMT の MH-音声コンポーネント記述子の AAC (ARIB STD-B60 表 7-57)
+	case 0x04: // 同 ALS
 		return GetAudioComponentTypeText_ja(ComponentType);
 	}
 

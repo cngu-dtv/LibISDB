@@ -1097,13 +1097,22 @@ static uint16_t data_stream_element(NeAACDecStruct *hDecoder, bitfile *ld)
     if (byte_aligned)
         faad_byte_align(ld);
 
-    /* LibISDB: keep the payload (ARIB STD-B32 Part 2 downmix coefficients are sent in a DSE) */
-    for (i = 0; i < count; i++)
+    /* LibISDB: keep the payload (ARIB STD-B32 Part 2 downmix coefficients are sent in a DSE).
+       The MPEG4_ancillary_data() DSE (ancillary_data_sync 0xBC) precedes any dialogue DSE in the
+       raw_data_block (STD-B32 Part 2 6.2.3 (3)), so a later DSE must not replace it. */
     {
-        hDecoder->dse_data[i] = (uint8_t)faad_getbits(ld, LEN_BYTE
-            DEBUGVAR(1,64,"data_stream_element(): data_stream_byte"));
+        uint8_t dse_tmp[510];
+        for (i = 0; i < count; i++)
+        {
+            dse_tmp[i] = (uint8_t)faad_getbits(ld, LEN_BYTE
+                DEBUGVAR(1,64,"data_stream_element(): data_stream_byte"));
+        }
+        if (hDecoder->dse_bytes == 0 || (count > 0 && dse_tmp[0] == 0xBC))
+        {
+            memcpy(hDecoder->dse_data, dse_tmp, count);
+            hDecoder->dse_bytes = count;
+        }
     }
-    hDecoder->dse_bytes = count;
 
     return count;
 }

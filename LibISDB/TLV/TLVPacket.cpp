@@ -37,7 +37,7 @@ namespace LibISDB
 namespace
 {
 
-// 通常の IP パケットは 1500 バイト以下 (ARIB TR-B39)
+// 通常の IP パケットは 1500 バイト以下 (ARIB TR-B39 第1部 第7編 5.5.5)
 constexpr size_t TLV_PACKET_DEFAULT_BUFFER_SIZE = 2048;
 
 }
@@ -161,7 +161,6 @@ TLVPacket::ParseResult TLVPacket::ParsePacket(
 		break;
 
 	default:
-		// 未定義の packet_type
 		OK = false;
 		break;
 	}
@@ -170,7 +169,6 @@ TLVPacket::ParseResult TLVPacket::ParsePacket(
 		return ParseResult::FormatError;
 
 	if ((pSequenceCounter != nullptr) && (m_Header.Kind == PayloadKind::MMTP)) {
-		// 連続性チェック
 		if (!pSequenceCounter->Check(m_Header.MMTP.PacketID, m_Header.MMTP.PacketSequenceNumber))
 			return ParseResult::ContinuityError;
 	}
@@ -280,7 +278,7 @@ bool TLVPacket::ParseIPv4(size_t Pos)
 
 bool TLVPacket::ParseIPv6(size_t Pos)
 {
-	// IETF RFC 2460 / ARIB TR-B39 第1部 第7編 5.5.3.1
+	// IETF RFC 8200 / ARIB TR-B39 第1部 第7編 5.5.3.1
 	const size_t Size = m_DataSize - Pos;
 	if (Size < IPV6_HEADER_SIZE)
 		return false;
@@ -375,7 +373,6 @@ bool TLVPacket::ParseCompressedIP(size_t Pos, IPHeaderContextTable *pContextTabl
 		break;
 
 	default:
-		// 未定義の CID_header_type
 		return false;
 	}
 
@@ -433,7 +430,7 @@ bool TLVPacket::ParseUDPPayload(size_t Pos, size_t Size)
 		return true;
 	}
 
-	// 放送の UDP ペイロードは NTP 以外 MMTP (ARIB TR-B39 第1部 第7編 5.5.3.5)
+	// 放送の UDP ペイロードは NTP 以外 MMTP (ARIB TR-B39 第1部 第7編 5.5.3.2)
 	if (m_Header.MMTP.Parse(&m_pData[Pos], Size)) {
 		m_Header.Kind = PayloadKind::MMTP;
 	} else {

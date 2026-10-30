@@ -150,7 +150,7 @@ namespace LibISDB
 
 		 TS は AnalyzerFilter、MMT は MMTAnalyzerFilter から取得する。
 		 ストリームの ID は TS では PID、MMT では packet_id。
-		 MMT の component_tag は運用上 0x0000 - 0x007F (ARIB TR-B39 第 4 部 表 15.2-1) なので 8 ビットで扱う。
+		 MMT の component_tag は運用上 0x0000 - 0x007F (ARIB TR-B39 第1部 第4編 表 15.2-1) なので 8 ビットで扱う。
 		*/
 		class ServiceSource
 		{
